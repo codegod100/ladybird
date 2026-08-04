@@ -75,11 +75,13 @@ static PhysicalOverflowDirections physical_overflow_directions(Box const& box)
         auto is_row_layout = computed_values.flex_direction() == CSS::FlexDirection::Row
             || computed_values.flex_direction() == CSS::FlexDirection::RowReverse;
 
+        // Flex-direction reverse changes where items are packed, but it must not flip the
+        // physical "unreachable scrollable overflow" axis. Chromium keeps overflow in the
+        // writing-mode-positive direction even for column-reverse / row-reverse containers.
+        // Flipping here clipped downward overflow for column-reverse shells (e.g. deer.social
+        // / React Native Web), leaving documentElement.scrollHeight equal to the viewport
+        // and making the page unscrollable.
         auto main_axis = is_row_layout ? inline_axis : block_axis;
-        if (computed_values.flex_direction() == CSS::FlexDirection::RowReverse
-            || computed_values.flex_direction() == CSS::FlexDirection::ColumnReverse) {
-            main_axis.is_reverse = !main_axis.is_reverse;
-        }
 
         auto cross_axis = is_row_layout ? block_axis : inline_axis;
         // AD-HOC: A legacy webkit box ignores `flex-wrap`, matching other engines.
