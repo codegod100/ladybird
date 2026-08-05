@@ -82,6 +82,11 @@ set(SOURCES
     CredentialManagement/FederatedCredentialOperations.cpp
     CredentialManagement/PasswordCredential.cpp
     CredentialManagement/PasswordCredentialOperations.cpp
+    WebAuthn/AuthenticatorResponse.cpp
+    WebAuthn/AuthenticatorAttestationResponse.cpp
+    WebAuthn/AuthenticatorAssertionResponse.cpp
+    WebAuthn/PublicKeyCredential.cpp
+    WebAuthn/SoftwarePasskeyAuthenticator.cpp
     Crypto/Crypto.cpp
     Crypto/CryptoAlgorithms.cpp
     Crypto/CryptoBindings.cpp

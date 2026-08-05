@@ -1,0 +1,6 @@
+// https://w3c.github.io/webauthn/#authenticatorattestationresponse
+[Exposed=Window, SecureContext]
+interface AuthenticatorAttestationResponse : AuthenticatorResponse {
+    [SameObject] readonly attribute ArrayBuffer attestationObject;
+    sequence<DOMString> getTransports();
+};
