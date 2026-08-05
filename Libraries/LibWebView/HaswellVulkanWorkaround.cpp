@@ -5,6 +5,7 @@
  */
 
 #include <AK/Array.h>
+#include <AK/LexicalPath.h>
 #include <AK/Platform.h>
 #include <LibCore/Directory.h>
 #include <LibCore/Environment.h>
@@ -15,6 +16,8 @@
 #if defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID)
 
 namespace {
+
+static constexpr StringView hasvk_icd_filename = "intel_hasvk_icd.x86_64.json"sv;
 
 // Mesa hasvk Gen7.5 (Haswell) PCI device IDs (8086:xxxx).
 static constexpr Array<StringView, 40> haswell_pci_device_ids = {
@@ -29,7 +32,60 @@ static bool is_haswell_pci_id(StringView device_id)
     return haswell_pci_device_ids.contains_slow(device_id);
 }
 
-static bool system_has_intel_haswell_gpu()
+static bool icd_path_points_at_hasvk(StringView icd_path)
+{
+    for (auto component : icd_path.split_view(':')) {
+        if (component.is_empty())
+            continue;
+        if (component.contains("hasvk"sv) && FileSystem::exists(component))
+            return true;
+    }
+    return false;
+}
+
+static Optional<ByteString> hasvk_icd_path_in_directory(StringView directory)
+{
+    auto icd_path = LexicalPath(directory).append("vulkan/icd.d"sv).append(hasvk_icd_filename).string();
+    if (FileSystem::exists(icd_path))
+        return icd_path;
+    return {};
+}
+
+static Optional<ByteString> find_hasvk_icd_path()
+{
+    if (auto icd_path = Core::Environment::get("LADYBIRD_HASVK_ICD"sv); icd_path.has_value() && FileSystem::exists(*icd_path))
+        return icd_path->to_byte_string();
+
+    static constexpr Array<StringView, 4> candidate_paths = {
+        "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
+        "/usr/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
+        "/usr/lib/x86_64-linux-gnu/GL/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
+        "/usr/lib64/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
+    };
+
+    for (auto path : candidate_paths) {
+        if (FileSystem::exists(path))
+            return path.to_byte_string();
+    }
+
+    if (auto xdg_data_dirs = Core::Environment::get("XDG_DATA_DIRS"sv); xdg_data_dirs.has_value()) {
+        for (auto directory : xdg_data_dirs->split_view(':')) {
+            if (auto icd_path = hasvk_icd_path_in_directory(directory); icd_path.has_value())
+                return icd_path;
+        }
+    }
+
+    if (auto icd_path = hasvk_icd_path_in_directory("/usr/share"sv); icd_path.has_value())
+        return icd_path;
+
+    return {};
+}
+
+}
+
+namespace WebView {
+
+bool system_has_intel_haswell_gpu()
 {
     bool found_haswell = false;
     auto flags = static_cast<Core::DirIterator::Flags>(Core::DirIterator::SkipDots | Core::DirIterator::NoStat);
@@ -65,39 +121,38 @@ static bool system_has_intel_haswell_gpu()
     return !result.is_error() && found_haswell;
 }
 
-static Optional<ByteString> find_hasvk_icd_path()
+bool haswell_hasvk_icd_is_configured()
 {
-    static constexpr Array<StringView, 2> candidate_paths = {
-        "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
-        "/usr/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
-    };
-
-    for (auto path : candidate_paths) {
-        if (FileSystem::exists(path))
-            return path.to_byte_string();
+    for (auto variable : Array { "VK_ICD_FILENAMES"sv, "VK_DRIVER_FILES"sv }) {
+        if (auto value = Core::Environment::get(variable); value.has_value() && icd_path_points_at_hasvk(*value))
+            return true;
     }
-
-    return {};
+    return false;
 }
 
-}
-
-namespace WebView {
-
-void configure_intel_haswell_vulkan_icd_if_needed()
+bool configure_intel_haswell_vulkan_icd_if_needed()
 {
     if (Core::Environment::has("VK_ICD_FILENAMES"sv) || Core::Environment::has("VK_DRIVER_FILES"sv))
-        return;
+        return haswell_hasvk_icd_is_configured();
 
     if (!system_has_intel_haswell_gpu())
-        return;
+        return false;
 
     auto icd_path = find_hasvk_icd_path();
     if (!icd_path.has_value())
-        return;
+        return false;
 
-    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
-    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
+    return true;
+}
+
+bool should_force_cpu_painting_for_haswell_gpu()
+{
+    if (!system_has_intel_haswell_gpu())
+        return false;
+
+    return !haswell_hasvk_icd_is_configured();
 }
 
 }
@@ -106,8 +161,24 @@ void configure_intel_haswell_vulkan_icd_if_needed()
 
 namespace WebView {
 
-void configure_intel_haswell_vulkan_icd_if_needed()
+bool configure_intel_haswell_vulkan_icd_if_needed()
 {
+    return false;
+}
+
+bool system_has_intel_haswell_gpu()
+{
+    return false;
+}
+
+bool haswell_hasvk_icd_is_configured()
+{
+    return false;
+}
+
+bool should_force_cpu_painting_for_haswell_gpu()
+{
+    return false;
 }
 
 }
