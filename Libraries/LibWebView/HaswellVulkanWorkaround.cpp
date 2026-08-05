@@ -34,7 +34,13 @@ static bool is_haswell_pci_id(StringView device_id)
 
 static bool icd_path_points_at_hasvk(StringView icd_path)
 {
-    return icd_path.contains("hasvk"sv);
+    for (auto component : icd_path.split_view(':')) {
+        if (component.is_empty())
+            continue;
+        if (component.contains("hasvk"sv) && FileSystem::exists(component))
+            return true;
+    }
+    return false;
 }
 
 static Optional<ByteString> hasvk_icd_path_in_directory(StringView directory)
@@ -126,18 +132,19 @@ bool haswell_hasvk_icd_is_configured()
 
 bool configure_intel_haswell_vulkan_icd_if_needed()
 {
-    if (Core::Environment::has("VK_ICD_FILENAMES"sv) || Core::Environment::has("VK_DRIVER_FILES"sv))
-        return haswell_hasvk_icd_is_configured();
-
     if (!system_has_intel_haswell_gpu())
         return false;
+
+    if (haswell_hasvk_icd_is_configured())
+        return true;
 
     auto icd_path = find_hasvk_icd_path();
     if (!icd_path.has_value())
         return false;
 
-    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
-    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
+    // Haswell only works with Mesa hasvk. Replace a non-hasvk ICD (e.g. iris) so Vulkan init does not hang.
+    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     return true;
 }
 
