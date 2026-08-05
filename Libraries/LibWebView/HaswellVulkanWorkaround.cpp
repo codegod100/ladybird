@@ -27,9 +27,25 @@ static constexpr Array<StringView, 40> haswell_pci_device_ids = {
     "0D12"sv, "0D16"sv, "0D1A"sv, "0D1B"sv, "0D1E"sv, "0D22"sv, "0D26"sv, "0D2A"sv, "0D2B"sv, "0D2E"sv,
 };
 
-static bool is_haswell_pci_id(StringView device_id)
+static bool is_haswell_pci_device_id(StringView device_id)
 {
-    return haswell_pci_device_ids.contains_slow(device_id);
+    auto normalized = device_id;
+    if (normalized.starts_with("0x"sv, CaseSensitivity::CaseInsensitive))
+        normalized = normalized.substring_view(2);
+
+    while (normalized.length() > 4 && normalized[0] == '0')
+        normalized = normalized.substring_view(1);
+
+    return haswell_pci_device_ids.contains_slow(normalized);
+}
+
+static bool is_intel_vendor_id(StringView vendor_id)
+{
+    auto normalized = vendor_id;
+    if (normalized.starts_with("0x"sv, CaseSensitivity::CaseInsensitive))
+        normalized = normalized.substring_view(2);
+
+    return normalized.equals_ignoring_ascii_case("8086"sv);
 }
 
 static bool icd_path_points_at_hasvk(StringView icd_path)
@@ -81,6 +97,58 @@ static Optional<ByteString> find_hasvk_icd_path()
     return {};
 }
 
+static Optional<ByteString> read_trimmed_sysfs_value(StringView path)
+{
+    auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+    if (file_or_error.is_error())
+        return {};
+
+    auto contents = file_or_error.release_value()->read_until_eof();
+    if (contents.is_error())
+        return {};
+
+    auto trimmed = StringView { contents.value() }.trim_whitespace(TrimMode::Both);
+    if (trimmed.is_empty())
+        return {};
+
+    return trimmed.to_byte_string();
+}
+
+static bool drm_device_is_intel_haswell(StringView card_name)
+{
+    auto device_path = ByteString::formatted("/sys/class/drm/{}/device/device", card_name);
+    auto vendor_path = ByteString::formatted("/sys/class/drm/{}/device/vendor", card_name);
+
+    if (auto device_id = read_trimmed_sysfs_value(device_path); device_id.has_value()) {
+        if (auto vendor_id = read_trimmed_sysfs_value(vendor_path); vendor_id.has_value() && is_intel_vendor_id(*vendor_id))
+            return is_haswell_pci_device_id(*device_id);
+    }
+
+    auto uevent_path = ByteString::formatted("/sys/class/drm/{}/device/uevent", card_name);
+    auto uevent_or_error = Core::File::open(uevent_path, Core::File::OpenMode::Read);
+    if (uevent_or_error.is_error())
+        return false;
+
+    auto uevent = uevent_or_error.release_value()->read_until_eof();
+    if (uevent.is_error())
+        return false;
+
+    for (auto line : StringView { uevent.value() }.lines()) {
+        if (!line.starts_with("PCI_ID="sv))
+            continue;
+        auto pci_id = line.substring_view("PCI_ID="sv.length());
+        auto colon_index = pci_id.find(':');
+        if (!colon_index.has_value())
+            continue;
+        auto vendor = pci_id.substring_view(0, colon_index.value());
+        auto device = pci_id.substring_view(colon_index.value() + 1);
+        if (is_intel_vendor_id(vendor) && is_haswell_pci_device_id(device))
+            return true;
+    }
+
+    return false;
+}
+
 }
 
 namespace WebView {
@@ -93,26 +161,13 @@ bool system_has_intel_haswell_gpu()
         if (found_haswell || !entry.name.starts_with("card"sv))
             return IterationDecision::Continue;
 
-        auto uevent_path = ByteString::formatted("/sys/class/drm/{}/device/uevent", entry.name);
-        auto uevent_or_error = Core::File::open(uevent_path, Core::File::OpenMode::Read);
-        if (uevent_or_error.is_error())
+        // Skip connector entries such as card0-HDMI-A-1; only cardN refers to the GPU device.
+        if (entry.name.contains('-'))
             return IterationDecision::Continue;
 
-        auto uevent = uevent_or_error.release_value()->read_until_eof();
-        if (uevent.is_error())
-            return IterationDecision::Continue;
-
-        auto uevent_view = StringView { uevent.value() };
-        for (auto line : uevent_view.lines()) {
-            if (!line.starts_with("PCI_ID="sv))
-                continue;
-            auto pci_id = line.substring_view("PCI_ID="sv.length());
-            if (!pci_id.starts_with("8086:"sv))
-                continue;
-            if (is_haswell_pci_id(pci_id.substring_view(5))) {
-                found_haswell = true;
-                break;
-            }
+        if (drm_device_is_intel_haswell(entry.name)) {
+            found_haswell = true;
+            return IterationDecision::Break;
         }
 
         return IterationDecision::Continue;
@@ -153,7 +208,9 @@ bool should_force_cpu_painting_for_haswell_gpu()
     if (!system_has_intel_haswell_gpu())
         return false;
 
-    return !haswell_hasvk_icd_is_configured();
+    // When Mesa hasvk cannot be located or pinned, probing the default Intel Vulkan ICD on Haswell
+    // can hang vkCreateInstance and leave the UI unresponsive.
+    return !configure_intel_haswell_vulkan_icd_if_needed();
 }
 
 }

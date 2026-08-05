@@ -15,6 +15,7 @@
 #include <LibGfx/SkiaBackendContext.h>
 #include <LibIPC/SingleServer.h>
 #include <LibMain/Main.h>
+#include <LibWebView/HaswellVulkanWorkaround.h>
 #include <LibWebView/Utilities.h>
 
 ErrorOr<int> ladybird_main(Main::Arguments arguments)
@@ -48,6 +49,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         Gfx::force_hinting_for_testing(Gfx::FontHintingStyle::Normal);
 
     WebView::platform_init();
+
+    if (!force_cpu_painting && WebView::should_force_cpu_painting_for_haswell_gpu()) {
+        warnln("Intel Haswell GPU detected without Mesa hasvk Vulkan driver; enabling --force-cpu-painting");
+        force_cpu_painting = true;
+    }
+
     auto& font_provider = static_cast<Gfx::PathFontProvider&>(Gfx::FontDatabase::the().install_system_font_provider(make<Gfx::PathFontProvider>()));
     if (force_fontconfig) {
         font_provider.set_name_but_fixme_should_create_custom_system_font_provider("FontConfig"_string);
