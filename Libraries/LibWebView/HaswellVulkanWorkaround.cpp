@@ -136,8 +136,8 @@ bool configure_intel_haswell_vulkan_icd_if_needed()
     if (!icd_path.has_value())
         return false;
 
-    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
-    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value(), Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     return true;
 }
 
