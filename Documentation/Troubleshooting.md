@@ -58,8 +58,20 @@ Mesa's default Intel Vulkan driver does not support Haswell. Ladybird automatica
 selects Mesa's `hasvk` ICD when it detects a Haswell GPU and `VK_ICD_FILENAMES` is unset.
 If GPU presentation still fails, run with `--force-cpu-painting`.
 
+When hasvk cannot be located, Ladybird enables CPU painting automatically so the UI
+does not hang waiting for an incompatible Vulkan driver. You may see
+`MESA-INTEL: warning: Haswell Vulkan support is incomplete` when the wrong driver is
+selected; that indicates hasvk was not configured.
+
 You may also see `Failed to get EGL display` in the log; that affects WebGL only and does not
 block normal page rendering once the Vulkan/Skia path is working.
+
+### Content Security Policy messages in the log
+
+Messages such as `Refusing to add inline event handler as it violates the Content Security
+Policy` are expected on pages with strict CSP. They indicate that `onclick` and similar
+inline handlers were blocked, not that the browser is hung. If a specific page appears
+unresponsive, check whether it relies on inline event handlers.
 
 ### Race condition on exit when running headless on systems with `llvmpipe`
 

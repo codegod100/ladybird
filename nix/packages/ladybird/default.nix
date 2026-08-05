@@ -50,6 +50,7 @@
   wrapGAppsHook3,
   gtk3,
   gsettings-desktop-schemas,
+  mesa,
 }:
 
 let
@@ -217,7 +218,8 @@ stdenv.mkDerivation (finalAttrs: {
     if [ -x "$out/bin/Ladybird" ]; then
       mv "$out/bin/Ladybird" "$out/bin/.Ladybird-qtwrapped"
       substitute ${./hasvk-wrapper.sh} "$out/bin/Ladybird" \
-        --subst-var-by ladybird "$out/bin/.Ladybird-qtwrapped"
+        --subst-var-by ladybird "$out/bin/.Ladybird-qtwrapped" \
+        --subst-var-by hasvk_icd "${mesa}/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
       chmod +x "$out/bin/Ladybird"
     fi
   '';
