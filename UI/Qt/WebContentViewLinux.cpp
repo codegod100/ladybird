@@ -11,6 +11,7 @@
 #include <AK/Math.h>
 #include <AK/Optional.h>
 #include <LibGfx/SharedImageBuffer.h>
+#include <LibWebView/Application.h>
 #include <UI/Qt/NativeWindowContainer.h>
 #include <UI/Qt/WebContentView.h>
 
@@ -967,12 +968,12 @@ void WebContentView::set_vulkan_window_container_visible(bool visible)
 
 void WebContentView::fall_back_to_bitmap_rendering()
 {
-    // This may be invoked from within QVulkanWindow's startNextFrame(), i.e. while a frame is in flight. Hiding the
-    // container synchronously destroys the window's swap chain and nulls out its Vulkan function pointers before Qt's
-    // endFrame() finishes presenting the current frame, which crashes inside Qt. Defer the hide to the next event loop
+    // This may be invoked from within QVulkanWindow's startNextFrame(), i.e. while a frame is in flight. Destroying
+    // the Vulkan window synchronously tears down the swap chain and nulls out Vulkan function pointers before Qt's
+    // endFrame() finishes presenting the current frame, which crashes inside Qt. Defer teardown to the next event loop
     // iteration so the in-flight frame first completes on a valid swap chain.
     QTimer::singleShot(0, this, [this]() {
-        set_vulkan_window_container_visible(false);
+        destroy_vulkan_window();
         update();
     });
 }
@@ -1005,6 +1006,11 @@ bool WebContentView::current_paintable_can_use_vulkan_window() const
 
 void WebContentView::schedule_vulkan_window_update()
 {
+    if (WebView::Application::web_content_options().force_cpu_painting == WebView::ForceCPUPainting::Yes) {
+        update();
+        return;
+    }
+
     if (m_vulkan_window) {
         if (!current_paintable_can_use_vulkan_window()) {
             set_vulkan_window_container_visible(false);

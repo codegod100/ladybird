@@ -54,19 +54,18 @@ Build/vcpkg/scripts/buildsystems/vcpkg.cmake:859 (_find_package)
 
 ### Intel Haswell (HD Graphics 4xxx) GPUs
 
-Mesa's default Intel Vulkan driver does not support Haswell. Ladybird automatically
-selects Mesa's `hasvk` ICD when it detects a Haswell GPU and `VK_ICD_FILENAMES` is unset.
-If GPU presentation still fails, run with `--force-cpu-painting`.
+Mesa's default Intel Vulkan driver (anv/iris) does not support Haswell, and Mesa's
+`hasvk` driver is still incomplete. Ladybird detects Haswell GPUs and automatically
+enables `--force-cpu-painting` so the UI stays on the CPU bitmap path instead of hanging
+in Vulkan init or trapping input on a non-updating native presentation window.
 
-When hasvk cannot be located, Ladybird enables CPU painting automatically so the UI
-does not hang waiting for an incompatible Vulkan driver. In that mode the Qt UI also
-skips creating its Vulkan presentation window and paints via the CPU bitmap path instead.
-You may see
-`MESA-INTEL: warning: Haswell Vulkan support is incomplete` when the wrong driver is
-selected; that indicates hasvk was not configured.
+When a hasvk ICD is available, Ladybird still pins `VK_ICD_FILENAMES` /
+`VK_DRIVER_FILES` to it so accidental Vulkan probes do not load anv. You may see
+`MESA-INTEL: warning: Haswell Vulkan support is incomplete` when anv was selected
+before pinning; that is a driver warning, not a Ladybird hang by itself.
 
-You may also see `Failed to get EGL display` in the log; that affects WebGL only and does not
-block normal page rendering once the Vulkan/Skia path is working.
+You may also see `Failed to get EGL display` in the log; that affects WebGL only and does
+not block normal page rendering on the CPU painting path.
 
 ### Content Security Policy messages in the log
 

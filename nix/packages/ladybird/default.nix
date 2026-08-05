@@ -210,10 +210,8 @@ stdenv.mkDerivation (finalAttrs: {
   # word-split (required for multiline --run with wrapQtAppsHook).
   __structuredAttrs = true;
 
-  # Haswell (Intel HD 4xxx) only works via Mesa hasvk. With every ICD present,
-  # Ladybird's Compositor vkCreateInstance returns VK_ERROR_INCOMPATIBLE_DRIVER
-  # (-9) and the process dies instead of falling back. Pin hasvk on those GPUs
-  # unless the user already set VK_ICD_FILENAMES / VK_DRIVER_FILES.
+  # Haswell (Intel HD 4xxx) only works via Mesa hasvk. Pin hasvk on those GPUs when the
+  # environment does not already select hasvk, replacing a non-hasvk ICD if needed.
   postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
     if [ -x "$out/bin/Ladybird" ]; then
       mv "$out/bin/Ladybird" "$out/bin/.Ladybird-qtwrapped"
