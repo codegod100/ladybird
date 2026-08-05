@@ -218,8 +218,31 @@ bool should_force_cpu_painting_for_haswell_gpu()
     // Always prefer CPU painting on Haswell. Mesa hasvk is incomplete; probing either anv or hasvk
     // from the Qt UI / compositor can hang and leave an unresponsive native window capturing input.
     // Still pin hasvk when available so any accidental Vulkan probe uses the least-bad ICD.
-    (void)configure_intel_haswell_vulkan_icd_if_needed();
+    apply_haswell_ui_workarounds_if_needed();
     return true;
+}
+
+void apply_haswell_ui_workarounds_if_needed()
+{
+    if (!system_has_intel_haswell_gpu())
+        return;
+
+    static bool applied = false;
+    if (applied)
+        return;
+    applied = true;
+
+    (void)configure_intel_haswell_vulkan_icd_if_needed();
+
+    // Wayland + incomplete Haswell Vulkan leaves Qt text-input / surface focus in a bad state:
+    // opening a tab and typing feels "locked" even when painting eventually falls back to CPU.
+    // Prefer xcb unless the user already chose a Qt platform explicitly.
+    if (!Core::Environment::get("QT_QPA_PLATFORM"sv).has_value()) {
+        (void)Core::Environment::set("QT_QPA_PLATFORM"sv, "xcb"sv, Core::Environment::Overwrite::No);
+        warnln("Intel Haswell GPU detected; preferring QT_QPA_PLATFORM=xcb over Wayland");
+    }
+
+    (void)Core::Environment::set("LADYBIRD_FORCE_CPU_PAINTING"sv, "1"sv, Core::Environment::Overwrite::Yes);
 }
 
 }
@@ -246,6 +269,10 @@ bool haswell_hasvk_icd_is_configured()
 bool should_force_cpu_painting_for_haswell_gpu()
 {
     return false;
+}
+
+void apply_haswell_ui_workarounds_if_needed()
+{
 }
 
 }

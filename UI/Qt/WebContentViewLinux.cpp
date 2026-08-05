@@ -43,6 +43,11 @@ static QByteArrayList vulkan_dmabuf_device_extensions()
 
 static QVulkanInstance* vulkan_instance()
 {
+    // Belt-and-suspenders: never probe Vulkan on the CPU-painting path. Haswell anv/hasvk can
+    // block inside QVulkanInstance::create() and leave every new tab's UI feeling locked.
+    if (WebView::Application::web_content_options().force_cpu_painting == WebView::ForceCPUPainting::Yes)
+        return nullptr;
+
     static QVulkanInstance* instance = []() -> QVulkanInstance* {
         auto* instance = new QVulkanInstance;
         auto supported_version = instance->supportedApiVersion();

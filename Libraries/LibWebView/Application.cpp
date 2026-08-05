@@ -622,7 +622,12 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     // Haswell Vulkan (anv and incomplete hasvk) can hang during GPU init and leave the Qt UI unresponsive.
     // Prefer CPU painting on those GPUs so presentation stays on the QWidget bitmap path.
-    if (m_web_content_options.force_cpu_painting == ForceCPUPainting::No && should_force_cpu_painting_for_haswell_gpu()) {
+    // Also honor LADYBIRD_FORCE_CPU_PAINTING from the Nix hasvk wrapper / early workaround.
+    auto env_forces_cpu_painting = false;
+    if (auto value = Core::Environment::get("LADYBIRD_FORCE_CPU_PAINTING"sv); value.has_value())
+        env_forces_cpu_painting = *value == "1"sv || value->equals_ignoring_ascii_case("true"sv);
+    if (m_web_content_options.force_cpu_painting == ForceCPUPainting::No
+        && (env_forces_cpu_painting || should_force_cpu_painting_for_haswell_gpu())) {
         warnln("Intel Haswell GPU detected; enabling --force-cpu-painting");
         m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
     }

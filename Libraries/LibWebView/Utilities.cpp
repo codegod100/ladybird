@@ -79,7 +79,8 @@ static LexicalPath find_prefix(LexicalPath const& application_directory)
 
 void platform_init(Optional<ByteString> ladybird_binary_path)
 {
-    configure_intel_haswell_vulkan_icd_if_needed();
+    // Must run before QApplication: selects xcb over Wayland and pins hasvk on Haswell.
+    apply_haswell_ui_workarounds_if_needed();
 
     s_ladybird_binary_path = move(ladybird_binary_path);
 

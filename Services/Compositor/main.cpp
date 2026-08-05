@@ -7,6 +7,7 @@
 #include <Compositor/ConnectionFromClient.h>
 #include <Compositor/Sandbox.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/Environment.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Process.h>
 #include <LibGfx/Font/Font.h>
@@ -50,7 +51,10 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     WebView::platform_init();
 
-    if (!force_cpu_painting && WebView::should_force_cpu_painting_for_haswell_gpu()) {
+    auto env_forces_cpu_painting = false;
+    if (auto value = Core::Environment::get("LADYBIRD_FORCE_CPU_PAINTING"sv); value.has_value())
+        env_forces_cpu_painting = *value == "1"sv || value->equals_ignoring_ascii_case("true"sv);
+    if (!force_cpu_painting && (env_forces_cpu_painting || WebView::should_force_cpu_painting_for_haswell_gpu())) {
         warnln("Intel Haswell GPU detected; enabling --force-cpu-painting");
         force_cpu_painting = true;
     }

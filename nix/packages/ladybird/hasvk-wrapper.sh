@@ -1,5 +1,6 @@
 #!/bin/sh
 # Pin Mesa hasvk on Intel Haswell when Vulkan ICD is unset or points at a non-hasvk driver.
+# Also force CPU painting + xcb so opening tabs / typing cannot hang on Wayland+Vulkan.
 # @ladybird@ and @hasvk_icd@ are substituted at install time.
 #
 # POSIX sh only: do not use bash `exec -a` (dash /bin/sh rejects it with
@@ -43,38 +44,78 @@ _haswell_gpu() {
   return 1
 }
 
-_icd_points_at_hasvk() {
-  case "$1" in
-    *hasvk*) return 0 ;;
-  esac
-  return 1
+# True only when every non-empty ICD entry points at hasvk (mixed lists still need pinning).
+_icd_list_is_hasvk_only() {
+  _list=$1
+  _saw_entry=0
+  _old_ifs=$IFS
+  IFS=:
+  for _entry in $_list; do
+    [ -n "$_entry" ] || continue
+    _saw_entry=1
+    case "$_entry" in
+      *hasvk*) ;;
+      *)
+        IFS=$_old_ifs
+        return 1
+        ;;
+    esac
+  done
+  IFS=$_old_ifs
+  [ "$_saw_entry" -eq 1 ]
 }
 
 _should_pin_hasvk() {
   if ! _haswell_gpu; then
     return 1
   fi
-  if [ -n "${VK_ICD_FILENAMES:-}" ] && _icd_points_at_hasvk "$VK_ICD_FILENAMES"; then
+  if [ -n "${VK_ICD_FILENAMES:-}" ] && _icd_list_is_hasvk_only "$VK_ICD_FILENAMES"; then
     return 1
   fi
-  if [ -n "${VK_DRIVER_FILES:-}" ] && _icd_points_at_hasvk "$VK_DRIVER_FILES"; then
+  if [ -n "${VK_DRIVER_FILES:-}" ] && _icd_list_is_hasvk_only "$VK_DRIVER_FILES"; then
     return 1
   fi
   return 0
 }
 
-if _should_pin_hasvk; then
-  _hasvk=""
-  if [ -r "@hasvk_icd@" ]; then
-    _hasvk="@hasvk_icd@"
-  elif [ -r "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json" ]; then
-    _hasvk="/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
+_args_contain_force_cpu_painting() {
+  for _arg in "$@"; do
+    case "$_arg" in
+      --force-cpu-painting) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+if _haswell_gpu; then
+  # Opening a new tab still created a Qt Vulkan surface on older builds; force the CPU path
+  # from the wrapper so even a stale binary / missed C++ detection cannot hang on typing.
+  export LADYBIRD_FORCE_CPU_PAINTING=1
+
+  # Wayland text-input + incomplete Haswell Vulkan feels "locked" when typing in a new tab.
+  if [ -z "${QT_QPA_PLATFORM:-}" ]; then
+    export QT_QPA_PLATFORM=xcb
+    echo "Intel Haswell GPU detected; preferring QT_QPA_PLATFORM=xcb over Wayland" >&2
   fi
 
-  if [ -n "$_hasvk" ]; then
-    export LADYBIRD_HASVK_ICD="$_hasvk"
-    export VK_ICD_FILENAMES="$_hasvk"
-    export VK_DRIVER_FILES="$_hasvk"
+  if _should_pin_hasvk; then
+    _hasvk=""
+    if [ -r "@hasvk_icd@" ]; then
+      _hasvk="@hasvk_icd@"
+    elif [ -r "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json" ]; then
+      _hasvk="/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
+    fi
+
+    if [ -n "$_hasvk" ]; then
+      export LADYBIRD_HASVK_ICD="$_hasvk"
+      export VK_ICD_FILENAMES="$_hasvk"
+      export VK_DRIVER_FILES="$_hasvk"
+    fi
+  fi
+
+  if ! _args_contain_force_cpu_painting "$@"; then
+    echo "Intel Haswell GPU detected; enabling --force-cpu-painting" >&2
+    exec "@ladybird@" --force-cpu-painting "$@"
   fi
 fi
 

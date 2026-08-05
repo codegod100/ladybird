@@ -59,6 +59,11 @@ Mesa's default Intel Vulkan driver (anv/iris) does not support Haswell, and Mesa
 enables `--force-cpu-painting` so the UI stays on the CPU bitmap path instead of hanging
 in Vulkan init or trapping input on a non-updating native presentation window.
 
+On Haswell, Ladybird also prefers `QT_QPA_PLATFORM=xcb` when unset. Wayland plus an
+incomplete Vulkan ICD often makes opening a new tab and typing feel "locked" (Qt text-input
+leave events / focus stuck on a non-updating surface), even when the rest of the page
+eventually paints.
+
 When a hasvk ICD is available, Ladybird still pins `VK_ICD_FILENAMES` /
 `VK_DRIVER_FILES` to it so accidental Vulkan probes do not load anv. You may see
 `MESA-INTEL: warning: Haswell Vulkan support is incomplete` when anv was selected
@@ -66,6 +71,22 @@ before pinning; that is a driver warning, not a Ladybird hang by itself.
 
 You may also see `Failed to get EGL display` in the log; that affects WebGL only and does
 not block normal page rendering on the CPU painting path.
+
+After rebuilding, launch with:
+
+```bash
+Ladybird --disable-sandbox
+```
+
+You should see both of:
+
+```
+Intel Haswell GPU detected; preferring QT_QPA_PLATFORM=xcb over Wayland
+Intel Haswell GPU detected; enabling --force-cpu-painting
+```
+
+If those lines are missing, you are not running a build that includes the Haswell workaround
+(or Haswell detection failed — check `/sys/class/drm/card*/device/{vendor,device}`).
 
 ### Content Security Policy messages in the log
 

@@ -25,4 +25,9 @@ WEBVIEW_API bool haswell_hasvk_icd_is_configured();
 // prefer CPU painting instead of probing anv/hasvk from the UI or compositor.
 WEBVIEW_API bool should_force_cpu_painting_for_haswell_gpu();
 
+// Apply Haswell UI workarounds as early as possible (before QApplication):
+// pin hasvk when available, prefer the X11/xcb Qt platform over Wayland, and signal that
+// CPU painting should be forced. Safe to call multiple times.
+WEBVIEW_API void apply_haswell_ui_workarounds_if_needed();
+
 }
