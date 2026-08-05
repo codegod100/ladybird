@@ -34,7 +34,13 @@ static bool is_haswell_pci_id(StringView device_id)
 
 static bool icd_path_points_at_hasvk(StringView icd_path)
 {
-    return icd_path.contains("hasvk"sv);
+    for (auto component : icd_path.split_view(':')) {
+        if (component.is_empty())
+            continue;
+        if (component.contains("hasvk"sv) && FileSystem::exists(component))
+            return true;
+    }
+    return false;
 }
 
 static Optional<ByteString> hasvk_icd_path_in_directory(StringView directory)
