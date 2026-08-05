@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   nix:
-    uses: nixbuild/nixbuild-action/.github/workflows/ci-workflow.yml@v26
+    uses: ./.github/workflows/nixbuild-ci-workflow.yml
     secrets:
       nixbuild_token: ${{ secrets.NIXBUILD_TOKEN }}
       github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -32,8 +32,11 @@ jobs:
       # packages only, skip default/update aliases.
       filter_builds: '.top_attr == "packages" and .attr != "default" and .attr != "update" and .system == "x86_64-linux"'
       label_builds: '".#\(.attr)"'
+      artifact_prefix: ladybird-nix
       nix_conf: |
         accept-flake-config = true
+      settings: |
+        log-build-url = true
       fail_fast: false
 
   push-cachix:
