@@ -10,4 +10,4 @@ interface FileSystemEntry {
     [FIXME] readonly attribute FileSystem filesystem;
 
     undefined getParent(optional FileSystemEntryCallback successCallback, optional FileSystemErrorCallback errorCallback);
-}
+};
