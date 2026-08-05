@@ -69,7 +69,7 @@ void FileSystemEntry::get_parent(GC::Ptr<WebIDL::CallbackType> success_callback,
         return;
 
     HTML::queue_global_task(HTML::Task::Source::FileReading, global, GC::create_function(realm.heap(), [success_callback] {
-        auto result = WebIDL::invoke_callback(*success_callback, {}, { JS::js_null() });
+        auto result = WebIDL::invoke_callback(*success_callback, {}, { { JS::js_null() } });
         if (result.is_error())
             dbgln("FileSystemEntry::getParent: success callback threw an exception");
     }));
