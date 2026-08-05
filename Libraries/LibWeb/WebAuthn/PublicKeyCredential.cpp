@@ -27,8 +27,9 @@ PublicKeyCredential::~PublicKeyCredential() = default;
 
 Utf16FlyString const& PublicKeyCredential::type() const
 {
-    static Utf16FlyString const type = "public-key"_utf16_fly_string;
-    return type;
+    // Intentionally leaked to avoid an exit-time destructor (-Wexit-time-destructors).
+    static Utf16FlyString const* type = new Utf16FlyString("public-key"_utf16_fly_string);
+    return *type;
 }
 
 GC::Ref<WebIDL::Promise> PublicKeyCredential::is_user_verifying_platform_authenticator_available(JS::VM& vm)

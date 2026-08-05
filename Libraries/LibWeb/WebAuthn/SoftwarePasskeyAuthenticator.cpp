@@ -37,8 +37,9 @@ struct StoredPasskey {
 
 static Vector<StoredPasskey>& passkey_store()
 {
-    static Vector<StoredPasskey> store;
-    return store;
+    // Intentionally leaked to avoid an exit-time destructor (-Wexit-time-destructors).
+    static Vector<StoredPasskey>* store = new Vector<StoredPasskey>;
+    return *store;
 }
 
 static ByteString to_byte_string(String const& string)
