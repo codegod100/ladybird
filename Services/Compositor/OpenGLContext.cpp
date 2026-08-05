@@ -161,7 +161,11 @@ OwnPtr<OpenGLContext> OpenGLContext::create(RefPtr<Gfx::SkiaBackendContext> skia
         return {};
 #    endif
 
-    EGLAttrib display_attributes[] = {
+    auto try_get_egl_display = [](EGLAttrib const* display_attributes) -> EGLDisplay {
+        return eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE, reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), display_attributes);
+    };
+
+    EGLAttrib const display_attributes_with_surfaceless[] = {
         EGL_PLATFORM_ANGLE_TYPE_ANGLE,
 #    if defined(AK_OS_MACOS)
         EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
@@ -173,7 +177,27 @@ OwnPtr<OpenGLContext> OpenGLContext::create(RefPtr<Gfx::SkiaBackendContext> skia
         EGL_NONE,
     };
 
-    auto display = eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE, reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), display_attributes);
+#    if defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID)
+    EGLAttrib const display_attributes_without_surfaceless[] = {
+        EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+        EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE,
+        EGL_NONE,
+    };
+
+    EGLAttrib const display_attributes_opengles[] = {
+        EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+        EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE,
+        EGL_NONE,
+    };
+#    endif
+
+    auto display = try_get_egl_display(display_attributes_with_surfaceless);
+#    if defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID)
+    if (display == EGL_NO_DISPLAY)
+        display = try_get_egl_display(display_attributes_without_surfaceless);
+    if (display == EGL_NO_DISPLAY)
+        display = try_get_egl_display(display_attributes_opengles);
+#    endif
     if (display == EGL_NO_DISPLAY) {
         dbgln("Failed to get EGL display");
         return {};

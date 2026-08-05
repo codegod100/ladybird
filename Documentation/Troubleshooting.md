@@ -52,6 +52,15 @@ Build/vcpkg/scripts/buildsystems/vcpkg.cmake:859 (_find_package)
 
 ## Running Ladybird
 
+### Intel Haswell (HD Graphics 4xxx) GPUs
+
+Mesa's default Intel Vulkan driver does not support Haswell. Ladybird automatically
+selects Mesa's `hasvk` ICD when it detects a Haswell GPU and `VK_ICD_FILENAMES` is unset.
+If GPU presentation still fails, run with `--force-cpu-painting`.
+
+You may also see `Failed to get EGL display` in the log; that affects WebGL only and does not
+block normal page rendering once the Vulkan/Skia path is working.
+
 ### Race condition on exit when running headless on systems with `llvmpipe`
 
 When running `--headless=text` or `--headless=layout-tree` on a UNIX system with the [llvmpipe](https://docs.mesa3d.org/drivers/llvmpipe.html) software rasterizer

@@ -19,6 +19,7 @@ set(SOURCES
     DownloadPresentation.cpp
     FileDownloader.cpp
     Geolocation.cpp
+    HaswellVulkanWorkaround.cpp
     HeadlessWebView.cpp
     HelperProcess.cpp
     HistoryDebug.cpp
