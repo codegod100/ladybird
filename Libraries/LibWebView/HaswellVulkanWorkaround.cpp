@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Array.h>
 #include <AK/Platform.h>
 #include <LibCore/Directory.h>
 #include <LibCore/Environment.h>
@@ -16,7 +17,7 @@
 namespace {
 
 // Mesa hasvk Gen7.5 (Haswell) PCI device IDs (8086:xxxx).
-static constexpr Array<StringView, 48> haswell_pci_device_ids = {
+static constexpr Array<StringView, 40> haswell_pci_device_ids = {
     "0402"sv, "0406"sv, "040A"sv, "040B"sv, "040E"sv, "0412"sv, "0416"sv, "041A"sv, "041B"sv, "041E"sv,
     "0A02"sv, "0A06"sv, "0A0A"sv, "0A0B"sv, "0A0E"sv, "0A12"sv, "0A16"sv, "0A1A"sv, "0A1B"sv, "0A1E"sv,
     "0A22"sv, "0A26"sv, "0A2A"sv, "0A2B"sv, "0A2E"sv, "0D02"sv, "0D06"sv, "0D0A"sv, "0D0B"sv, "0D0E"sv,
