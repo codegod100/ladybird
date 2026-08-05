@@ -8,6 +8,7 @@
 
 #include <AK/Utf16String.h>
 #include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Forward.h>
 
 namespace Web::EntriesAPI {
 
@@ -27,6 +28,8 @@ public:
     bool is_file() const;
     bool is_directory() const;
     Utf16String const& name() const;
+
+    void get_parent(GC::Ptr<WebIDL::CallbackType> success_callback, GC::Ptr<WebIDL::CallbackType> error_callback);
 
 private:
     FileSystemEntry(JS::Realm&, EntryType entry_type, Utf16String name);

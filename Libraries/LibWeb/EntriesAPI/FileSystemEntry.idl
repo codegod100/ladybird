@@ -1,3 +1,6 @@
+callback FileSystemEntryCallback = undefined (FileSystemEntry? entry);
+callback FileSystemErrorCallback = undefined (DOMException error);
+
 [Exposed=Window]
 interface FileSystemEntry {
     readonly attribute boolean isFile;
@@ -6,5 +9,5 @@ interface FileSystemEntry {
     [FIXME] readonly attribute Utf16USVString fullPath;
     [FIXME] readonly attribute FileSystem filesystem;
 
-    [FIXME] undefined getParent(optional FileSystemEntryCallback successCallback, optional ErrorCallback errorCallback);
-};
+    undefined getParent(optional FileSystemEntryCallback successCallback, optional FileSystemErrorCallback errorCallback);
+}

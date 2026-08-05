@@ -19,6 +19,7 @@
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
 #include <LibWeb/HTML/SelectedFile.h>
+#include <LibWebView/HaswellVulkanWorkaround.h>
 #include <LibWebView/Utilities.h>
 
 #define TOKENCAT(x, y) x##y
@@ -78,6 +79,8 @@ static LexicalPath find_prefix(LexicalPath const& application_directory)
 
 void platform_init(Optional<ByteString> ladybird_binary_path)
 {
+    configure_intel_haswell_vulkan_icd_if_needed();
+
     s_ladybird_binary_path = move(ladybird_binary_path);
 
     s_ladybird_resource_root = [] {
