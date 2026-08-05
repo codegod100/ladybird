@@ -15,3 +15,8 @@ nix run                   # launch Ladybird
 Binary cache: [`codegod100`](https://app.cachix.org/cache/codegod100) (via `nixConfig`).
 
 CI: `.github/workflows/nix.yml` builds on nixbuild.net and pushes to Cachix.
+
+## Planned: MP4 MSE (YouTube live)
+
+Outline only — see [Documentation/MP4MsePlan.md](../Documentation/MP4MsePlan.md).
+WebM YouTube VOD works today; live needs fMP4 MSE (`avc1`/`mp4a`).
