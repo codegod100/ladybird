@@ -46,8 +46,9 @@ struct ListCaches {
 
 static ListCaches& caches()
 {
-    static ListCaches cache;
-    return cache;
+    // Intentionally leaked to avoid an exit-time destructor (-Wexit-time-destructors).
+    static ListCaches* cache = new ListCaches;
+    return *cache;
 }
 
 static bool cache_fresh(Optional<MonotonicTime> const& at)
