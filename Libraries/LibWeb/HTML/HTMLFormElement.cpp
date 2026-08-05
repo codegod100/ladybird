@@ -25,6 +25,7 @@
 #include <LibWeb/HTML/HTMLDialogElement.h>
 #include <LibWeb/HTML/HTMLFieldSetElement.h>
 #include <LibWeb/HTML/HTMLFormControlsCollection.h>
+#include <LibWeb/CredentialManagement/PasswordAutofill.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -106,6 +107,9 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
 {
     auto& vm = this->vm();
     auto& realm = this->realm();
+
+    // AD-HOC: OpenBao password save (passwordmgr overlay)
+    CredentialManagement::PasswordAutofill::maybe_save_from_form(*this);
 
     // 1. If form cannot navigate, then return.
     if (cannot_navigate())

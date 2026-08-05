@@ -43,6 +43,7 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLDataListElement.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
+#include <LibWeb/CredentialManagement/PasswordAutofill.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
@@ -1530,6 +1531,10 @@ void HTMLInputElement::update_slider_shadow_tree_elements()
 
 void HTMLInputElement::did_receive_focus()
 {
+    // AD-HOC: OpenBao password autofill (passwordmgr overlay)
+    if (type_state() == TypeAttributeState::Password)
+        CredentialManagement::PasswordAutofill::try_fill_from_password_field(*this);
+
     if (!m_text_node)
         return;
     m_text_node->set_needs_repaint();
@@ -2093,6 +2098,13 @@ void HTMLInputElement::clear_algorithm()
 void HTMLInputElement::form_associated_element_was_inserted()
 {
     create_shadow_tree_if_needed();
+
+    // AD-HOC: OpenBao password autofill when a password field appears (SPAs).
+    if (type_state() == TypeAttributeState::Password && is_connected()) {
+        queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
+            CredentialManagement::PasswordAutofill::try_fill_from_password_field(*this);
+        });
+    }
 
     if (is_connected()) {
         // https://html.spec.whatwg.org/multipage/input.html#radio-button-state-(type=radio)

@@ -4,6 +4,7 @@
  */
 
 #include <AK/Base64.h>
+#include <AK/Format.h>
 #include <AK/Random.h>
 #include <AK/StringBuilder.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
@@ -12,6 +13,7 @@
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibURL/Origin.h>
+#include <LibWeb/CredentialManagement/OpenBaoStore.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/WebAuthn/AuthenticatorAssertionResponse.h>
 #include <LibWeb/WebAuthn/AuthenticatorAttestationResponse.h>
@@ -132,7 +134,9 @@ static WebIDL::ExceptionOr<ByteBuffer> make_authenticator_data(JS::Realm& realm,
     if (auth_data.try_append(rp_hash).is_error())
         return WebIDL::UnknownError::create(realm, "OOM"_utf16);
 
-    // Match openbao-passkeys: UP | UV | BE | BS (Pocket ID requires BE/BS).
+    // Match openbao-passkeys / synced passkeys: UP | UV | BE | BS.
+    // Pocket ID (go-webauthn) rejects assertions that omit BE/BS when the
+    // credential was registered as a multi-device / backup-eligible passkey.
     u8 flags = 0x01 | 0x04 | 0x08 | 0x10; // UP | UV | BE | BS
     if (include_attested)
         flags |= 0x40; // AT
@@ -218,19 +222,35 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_create_credential(JS:
     if (private_key_bytes_or_error.is_error())
         return WebIDL::UnknownError::create(realm, "Keygen failed"_utf16);
 
-    passkey_store().append(StoredPasskey {
-        .credential_id = MUST(ByteBuffer::copy(credential_id)),
-        .user_handle = MUST(ByteBuffer::copy(user_handle)),
+    auto private_key_bytes = private_key_bytes_or_error.release_value();
+    auto id_b64 = TRY(lift_string(realm, encode_base64url(credential_id, AK::OmitPadding::Yes)));
+
+    // Prefer OpenBao KV; fall back to process-local store.
+    // Registration signCount is 0 (WebAuthn); assertions must return a strictly greater count.
+    constexpr u32 registration_sign_count = 0;
+    auto openbao_result = CredentialManagement::OpenBaoStore::store_passkey({
         .rp_id = rp_id,
-        .private_key_bytes = private_key_bytes_or_error.release_value(),
-        .sign_count = 1,
+        .credential_id_b64 = ByteString { id_b64.bytes() },
+        .user_handle = MUST(ByteBuffer::copy(user_handle)),
+        .private_key_bytes = MUST(ByteBuffer::copy(private_key_bytes)),
+        .sign_count = registration_sign_count,
+        .item_path = {},
     });
+    if (openbao_result.is_error()) {
+        dbgln("OpenBao passkey store failed, using in-memory fallback: {}", openbao_result.error());
+        passkey_store().append(StoredPasskey {
+            .credential_id = MUST(ByteBuffer::copy(credential_id)),
+            .user_handle = MUST(ByteBuffer::copy(user_handle)),
+            .rp_id = rp_id,
+            .private_key_bytes = move(private_key_bytes),
+            .sign_count = registration_sign_count,
+        });
+    }
 
     auto client_data = TRY(build_client_data_json(realm, "webauthn.create"sv, challenge, origin));
-    auto auth_data = TRY(make_authenticator_data(realm, rp_id, credential_id, cose_key, true, 1));
+    auto auth_data = TRY(make_authenticator_data(realm, rp_id, credential_id, cose_key, true, registration_sign_count));
     auto attestation_object = TRY(encode_none_attestation_object(realm, auth_data));
 
-    auto id_b64 = TRY(lift_string(realm, encode_base64url(credential_id, AK::OmitPadding::Yes)));
     auto client_data_ab = JS::ArrayBuffer::create(realm, move(client_data));
     auto attestation_ab = JS::ArrayBuffer::create(realm, move(attestation_object));
     auto raw_id_ab = JS::ArrayBuffer::create(realm, MUST(ByteBuffer::copy(credential_id)));
@@ -243,8 +263,10 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
 {
     auto& vm = realm.vm();
     auto origin = HTML::current_settings_object().origin();
+    dbgln("WebAuthn get: origin={}", origin.serialize());
 
     auto challenge = TRY(buffer_from_js(realm, TRY(public_key_options.get("challenge"_utf16_fly_string))));
+    dbgln("WebAuthn get: challenge_bytes={}", challenge.size());
 
     ByteString rp_id;
     auto rp_id_value = TRY(public_key_options.get("rpId"_utf16_fly_string));
@@ -256,22 +278,47 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
     } else {
         return WebIDL::NotAllowedError::create(realm, "Passkey RP ID missing"_utf16);
     }
+    dbgln("WebAuthn get: rpId={}", rp_id);
 
-    StoredPasskey* match = nullptr;
-    for (auto& entry : passkey_store()) {
-        if (entry.rp_id == rp_id) {
-            match = &entry;
-            break;
+    ByteBuffer credential_id;
+    ByteBuffer user_handle;
+    ByteBuffer private_key_bytes;
+    u32 sign_count = 0;
+
+    auto openbao = CredentialManagement::OpenBaoStore::find_passkey(rp_id);
+    dbgln("WebAuthn get: openbao find error={} has={}", openbao.is_error(), !openbao.is_error() && openbao.value().has_value());
+    if (!openbao.is_error() && openbao.value().has_value()) {
+        auto entry = openbao.value().release_value();
+        auto decoded_id = TRY(lift(realm, decode_base64url(entry.credential_id_b64)));
+        credential_id = move(decoded_id);
+        // Copy before persisting signCount — moving would store empty key material
+        // and wipe OpenBao secrets (also breaks privateKeyJwk regeneration).
+        user_handle = MUST(ByteBuffer::copy(entry.user_handle));
+        private_key_bytes = MUST(ByteBuffer::copy(entry.private_key_bytes));
+        sign_count = entry.sign_count + 1;
+        entry.sign_count = sign_count;
+        if (auto stored = CredentialManagement::OpenBaoStore::store_passkey(entry); stored.is_error())
+            dbgln("OpenBao passkey signCount update failed: {}", stored.error());
+    } else {
+        StoredPasskey* match = nullptr;
+        for (auto& entry : passkey_store()) {
+            if (entry.rp_id == rp_id) {
+                match = &entry;
+                break;
+            }
         }
+        if (!match)
+            return WebIDL::NotAllowedError::create(realm, "No software passkey for this RP"_utf16);
+        match->sign_count += 1;
+        credential_id = MUST(ByteBuffer::copy(match->credential_id));
+        user_handle = MUST(ByteBuffer::copy(match->user_handle));
+        private_key_bytes = MUST(ByteBuffer::copy(match->private_key_bytes));
+        sign_count = match->sign_count;
     }
-    if (!match)
-        return WebIDL::NotAllowedError::create(realm, "No software passkey for this RP"_utf16);
-
-    match->sign_count += 1;
 
     auto client_data = TRY(build_client_data_json(realm, "webauthn.get"sv, challenge, origin));
     auto client_hash = TRY(sha256(realm, client_data));
-    auto auth_data = TRY(make_authenticator_data(realm, rp_id, match->credential_id, {}, false, match->sign_count));
+    auto auth_data = TRY(make_authenticator_data(realm, rp_id, credential_id, {}, false, sign_count));
 
     ByteBuffer to_sign;
     if (to_sign.try_append(auth_data).is_error() || to_sign.try_append(client_hash).is_error())
@@ -279,7 +326,7 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
     auto hash = TRY(sha256(realm, to_sign));
 
     ::Crypto::Curves::SECP256r1 curve;
-    auto private_key = ::Crypto::UnsignedBigInteger::import_data(match->private_key_bytes);
+    auto private_key = ::Crypto::UnsignedBigInteger::import_data(private_key_bytes);
     auto signature_or_error = curve.sign(hash, private_key);
     if (signature_or_error.is_error())
         return WebIDL::UnknownError::create(realm, "Sign failed"_utf16);
@@ -289,12 +336,12 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
         return WebIDL::UnknownError::create(realm, "Sign failed"_utf16);
     auto sig_der = sig_der_or_error.release_value();
 
-    auto id_b64 = TRY(lift_string(realm, encode_base64url(match->credential_id, AK::OmitPadding::Yes)));
+    auto id_b64 = TRY(lift_string(realm, encode_base64url(credential_id, AK::OmitPadding::Yes)));
     auto client_data_ab = JS::ArrayBuffer::create(realm, move(client_data));
     auto auth_data_ab = JS::ArrayBuffer::create(realm, move(auth_data));
     auto signature_ab = JS::ArrayBuffer::create(realm, move(sig_der));
-    auto user_handle_ab = JS::ArrayBuffer::create(realm, MUST(ByteBuffer::copy(match->user_handle)));
-    auto raw_id_ab = JS::ArrayBuffer::create(realm, MUST(ByteBuffer::copy(match->credential_id)));
+    auto user_handle_ab = JS::ArrayBuffer::create(realm, MUST(ByteBuffer::copy(user_handle)));
+    auto raw_id_ab = JS::ArrayBuffer::create(realm, MUST(ByteBuffer::copy(credential_id)));
 
     auto response = AuthenticatorAssertionResponse::create(realm, client_data_ab, auth_data_ab, signature_ab, user_handle_ab);
     return PublicKeyCredential::create(realm, Utf16String::from_utf8(id_b64), raw_id_ab, response, "platform"_string);
