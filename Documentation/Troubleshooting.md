@@ -59,7 +59,9 @@ selects Mesa's `hasvk` ICD when it detects a Haswell GPU and `VK_ICD_FILENAMES` 
 If GPU presentation still fails, run with `--force-cpu-painting`.
 
 When hasvk cannot be located, Ladybird enables CPU painting automatically so the UI
-does not hang waiting for an incompatible Vulkan driver. You may see
+does not hang waiting for an incompatible Vulkan driver. In that mode the Qt UI also
+skips creating its Vulkan presentation window and paints via the CPU bitmap path instead.
+You may see
 `MESA-INTEL: warning: Haswell Vulkan support is incomplete` when the wrong driver is
 selected; that indicates hasvk was not configured.
 

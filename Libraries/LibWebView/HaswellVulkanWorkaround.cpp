@@ -132,16 +132,17 @@ bool haswell_hasvk_icd_is_configured()
 
 bool configure_intel_haswell_vulkan_icd_if_needed()
 {
-    if (Core::Environment::has("VK_ICD_FILENAMES"sv) || Core::Environment::has("VK_DRIVER_FILES"sv))
-        return haswell_hasvk_icd_is_configured();
-
     if (!system_has_intel_haswell_gpu())
         return false;
+
+    if (haswell_hasvk_icd_is_configured())
+        return true;
 
     auto icd_path = find_hasvk_icd_path();
     if (!icd_path.has_value())
         return false;
 
+    // Haswell only works with Mesa hasvk. Replace a non-hasvk ICD (e.g. iris) so Vulkan init does not hang.
     (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     return true;
