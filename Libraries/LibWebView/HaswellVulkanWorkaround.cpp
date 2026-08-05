@@ -54,7 +54,7 @@ static Optional<ByteString> hasvk_icd_path_in_directory(StringView directory)
 static Optional<ByteString> find_hasvk_icd_path()
 {
     if (auto icd_path = Core::Environment::get("LADYBIRD_HASVK_ICD"sv); icd_path.has_value() && FileSystem::exists(*icd_path))
-        return icd_path;
+        return icd_path->to_byte_string();
 
     static constexpr Array<StringView, 4> candidate_paths = {
         "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"sv,
