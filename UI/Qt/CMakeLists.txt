@@ -30,6 +30,7 @@ target_sources(ladybird PRIVATE
     Menu.cpp
     NativeWindowContainer.cpp
     Settings.cpp
+    PasswordManagerDialog.cpp
     StringUtils.cpp
     Tab.cpp
     TabBar.cpp

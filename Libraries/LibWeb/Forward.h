@@ -209,6 +209,15 @@ class PasswordCredential;
 
 }
 
+namespace Web::WebAuthn {
+
+class AuthenticatorResponse;
+class AuthenticatorAttestationResponse;
+class AuthenticatorAssertionResponse;
+class PublicKeyCredential;
+
+}
+
 namespace Web::Crypto {
 
 class Crypto;

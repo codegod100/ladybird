@@ -4295,6 +4295,9 @@ void Document::completely_finish_loading()
 {
     m_ongoing_navigation_fetch_controller = nullptr;
 
+    // AD-HOC: Do not silent-autofill passwords on load. Fill only when the user
+    // focuses a password field (see HTMLInputElement).
+
     // 2. Set document's completely loaded time to the current time.
     // AD-HOC: Set this unconditionally, even if the document has no navigable yet.
     //         In the async state machine, documents created during populate may complete

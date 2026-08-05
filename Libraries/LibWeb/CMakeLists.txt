@@ -82,6 +82,13 @@ set(SOURCES
     CredentialManagement/FederatedCredentialOperations.cpp
     CredentialManagement/PasswordCredential.cpp
     CredentialManagement/PasswordCredentialOperations.cpp
+    CredentialManagement/OpenBaoStore.cpp
+    CredentialManagement/PasswordAutofill.cpp
+    WebAuthn/AuthenticatorResponse.cpp
+    WebAuthn/AuthenticatorAttestationResponse.cpp
+    WebAuthn/AuthenticatorAssertionResponse.cpp
+    WebAuthn/PublicKeyCredential.cpp
+    WebAuthn/SoftwarePasskeyAuthenticator.cpp
     Crypto/Crypto.cpp
     Crypto/CryptoAlgorithms.cpp
     Crypto/CryptoBindings.cpp
@@ -1313,6 +1320,11 @@ set(GENERATED_SOURCES
 
 ladybird_lib(LibWeb web EXPLICIT_SYMBOL_EXPORT)
 add_dependencies(LibWeb generate_GLFunctions.cpp)
+
+
+# OpenBao KV client (passwordmgr overlay)
+find_package(CURL REQUIRED)
+target_link_libraries(LibWeb PRIVATE CURL::libcurl)
 
 target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibURL LibTLS LibRequests LibGC LibSync LibThreading skia SDL3::SDL3 LibXml2::LibXml2)
 

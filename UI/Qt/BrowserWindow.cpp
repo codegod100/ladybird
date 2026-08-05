@@ -40,6 +40,7 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <UI/Qt/PasswordManagerDialog.h>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -348,6 +349,14 @@ BrowserWindow::BrowserWindow(Vector<URL::URL> const& initial_urls, IsPopupWindow
 
     edit_menu->addSeparator();
     edit_menu->addAction(create_application_action(*edit_menu, application.open_settings_page_action(), IncludeActionIcon::No));
+
+    auto* password_manager_action = new QAction("&Password Manager…", this);
+    QObject::connect(password_manager_action, &QAction::triggered, this, [this] {
+        auto* dialog = new PasswordManagerDialog(this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->open();
+    });
+    edit_menu->addAction(password_manager_action);
 
     auto* view_menu = m_hamburger_menu->addMenu("&View");
     menuBar()->addMenu(view_menu);

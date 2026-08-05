@@ -25,6 +25,7 @@
 #include <LibWeb/HTML/HTMLDialogElement.h>
 #include <LibWeb/HTML/HTMLFieldSetElement.h>
 #include <LibWeb/HTML/HTMLFormControlsCollection.h>
+#include <LibWeb/CredentialManagement/PasswordAutofill.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -185,6 +186,9 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
         if (cannot_navigate())
             return {};
     }
+
+    // AD-HOC: OpenBao password save — only after abort checks / submit cancellation.
+    CredentialManagement::PasswordAutofill::maybe_save_from_form(*this);
 
     // 6. Let encoding be the result of picking an encoding for the form.
     auto encoding = TRY_OR_THROW_OOM(vm, pick_an_encoding());
