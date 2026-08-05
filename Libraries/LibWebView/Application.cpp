@@ -37,6 +37,7 @@
 #include <LibWebView/CookieJar.h>
 #include <LibWebView/HSTSStore.h>
 #include <LibWebView/HeadlessWebView.h>
+#include <LibWebView/HaswellVulkanWorkaround.h>
 #include <LibWebView/HelperProcess.h>
 #include <LibWebView/HistoryStore.h>
 #include <LibWebView/Menu.h>
@@ -616,6 +617,13 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     if (m_web_content_options.is_test_mode == IsTestMode::Yes) {
         m_web_content_options.expose_experimental_interfaces = ExposeExperimentalInterfaces::Yes;
         m_web_content_options.expose_internals_object = ExposeInternalsObject::Yes;
+        m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
+    }
+
+    // Haswell's default Intel Vulkan driver is incompatible with Ladybird's compositor. When Mesa's hasvk ICD
+    // cannot be located, fall back to CPU painting so the UI remains responsive instead of hanging on GPU init.
+    if (m_web_content_options.force_cpu_painting == ForceCPUPainting::No && should_force_cpu_painting_for_haswell_gpu()) {
+        warnln("Intel Haswell GPU detected without Mesa hasvk Vulkan driver; enabling --force-cpu-painting");
         m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
     }
 
