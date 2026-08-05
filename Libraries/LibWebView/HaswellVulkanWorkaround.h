@@ -21,7 +21,8 @@ WEBVIEW_API bool system_has_intel_haswell_gpu();
 // Returns true when VK_ICD_FILENAMES / VK_DRIVER_FILES points at Mesa's hasvk ICD.
 WEBVIEW_API bool haswell_hasvk_icd_is_configured();
 
-// Returns true when Haswell is present but hasvk is not configured and CPU painting should be used.
+// Returns true when Haswell is present. Haswell Vulkan is incomplete enough that Ladybird should
+// prefer CPU painting instead of probing anv/hasvk from the UI or compositor.
 WEBVIEW_API bool should_force_cpu_painting_for_haswell_gpu();
 
 }

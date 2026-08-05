@@ -620,10 +620,10 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
         m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
     }
 
-    // Haswell's default Intel Vulkan driver is incompatible with Ladybird's compositor. When Mesa's hasvk ICD
-    // cannot be located, fall back to CPU painting so the UI remains responsive instead of hanging on GPU init.
+    // Haswell Vulkan (anv and incomplete hasvk) can hang during GPU init and leave the Qt UI unresponsive.
+    // Prefer CPU painting on those GPUs so presentation stays on the QWidget bitmap path.
     if (m_web_content_options.force_cpu_painting == ForceCPUPainting::No && should_force_cpu_painting_for_haswell_gpu()) {
-        warnln("Intel Haswell GPU detected without Mesa hasvk Vulkan driver; enabling --force-cpu-painting");
+        warnln("Intel Haswell GPU detected; enabling --force-cpu-painting");
         m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
     }
 

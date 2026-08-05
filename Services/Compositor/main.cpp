@@ -51,7 +51,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     WebView::platform_init();
 
     if (!force_cpu_painting && WebView::should_force_cpu_painting_for_haswell_gpu()) {
-        warnln("Intel Haswell GPU detected without Mesa hasvk Vulkan driver; enabling --force-cpu-painting");
+        warnln("Intel Haswell GPU detected; enabling --force-cpu-painting");
         force_cpu_painting = true;
     }
 

@@ -21,31 +21,37 @@ static constexpr StringView hasvk_icd_filename = "intel_hasvk_icd.x86_64.json"sv
 
 // Mesa hasvk Gen7.5 (Haswell) PCI device IDs (8086:xxxx).
 static constexpr Array<StringView, 40> haswell_pci_device_ids = {
-    "0402"sv, "0406"sv, "040A"sv, "040B"sv, "040E"sv, "0412"sv, "0416"sv, "041A"sv, "041B"sv, "041E"sv,
-    "0A02"sv, "0A06"sv, "0A0A"sv, "0A0B"sv, "0A0E"sv, "0A12"sv, "0A16"sv, "0A1A"sv, "0A1B"sv, "0A1E"sv,
-    "0A22"sv, "0A26"sv, "0A2A"sv, "0A2B"sv, "0A2E"sv, "0D02"sv, "0D06"sv, "0D0A"sv, "0D0B"sv, "0D0E"sv,
-    "0D12"sv, "0D16"sv, "0D1A"sv, "0D1B"sv, "0D1E"sv, "0D22"sv, "0D26"sv, "0D2A"sv, "0D2B"sv, "0D2E"sv,
+    "0402"sv, "0406"sv, "040a"sv, "040b"sv, "040e"sv, "0412"sv, "0416"sv, "041a"sv, "041b"sv, "041e"sv,
+    "0a02"sv, "0a06"sv, "0a0a"sv, "0a0b"sv, "0a0e"sv, "0a12"sv, "0a16"sv, "0a1a"sv, "0a1b"sv, "0a1e"sv,
+    "0a22"sv, "0a26"sv, "0a2a"sv, "0a2b"sv, "0a2e"sv, "0d02"sv, "0d06"sv, "0d0a"sv, "0d0b"sv, "0d0e"sv,
+    "0d12"sv, "0d16"sv, "0d1a"sv, "0d1b"sv, "0d1e"sv, "0d22"sv, "0d26"sv, "0d2a"sv, "0d2b"sv, "0d2e"sv,
 };
 
-static bool is_haswell_pci_device_id(StringView device_id)
+static StringView strip_pci_id_prefix(StringView value)
 {
-    auto normalized = device_id;
+    auto normalized = value;
     if (normalized.starts_with("0x"sv, CaseSensitivity::CaseInsensitive))
         normalized = normalized.substring_view(2);
 
     while (normalized.length() > 4 && normalized[0] == '0')
         normalized = normalized.substring_view(1);
 
-    return haswell_pci_device_ids.contains_slow(normalized);
+    return normalized;
+}
+
+static bool is_haswell_pci_device_id(StringView device_id)
+{
+    auto normalized = strip_pci_id_prefix(device_id);
+    for (auto id : haswell_pci_device_ids) {
+        if (normalized.equals_ignoring_ascii_case(id))
+            return true;
+    }
+    return false;
 }
 
 static bool is_intel_vendor_id(StringView vendor_id)
 {
-    auto normalized = vendor_id;
-    if (normalized.starts_with("0x"sv, CaseSensitivity::CaseInsensitive))
-        normalized = normalized.substring_view(2);
-
-    return normalized.equals_ignoring_ascii_case("8086"sv);
+    return strip_pci_id_prefix(vendor_id).equals_ignoring_ascii_case("8086"sv);
 }
 
 static bool icd_path_points_at_hasvk(StringView icd_path)
@@ -119,10 +125,10 @@ static bool drm_device_is_intel_haswell(StringView card_name)
     auto device_path = ByteString::formatted("/sys/class/drm/{}/device/device", card_name);
     auto vendor_path = ByteString::formatted("/sys/class/drm/{}/device/vendor", card_name);
 
-    if (auto device_id = read_trimmed_sysfs_value(device_path); device_id.has_value()) {
-        if (auto vendor_id = read_trimmed_sysfs_value(vendor_path); vendor_id.has_value() && is_intel_vendor_id(*vendor_id))
-            return is_haswell_pci_device_id(*device_id);
-    }
+    auto device_id = read_trimmed_sysfs_value(device_path);
+    auto vendor_id = read_trimmed_sysfs_value(vendor_path);
+    if (device_id.has_value() && vendor_id.has_value())
+        return is_intel_vendor_id(*vendor_id) && is_haswell_pci_device_id(*device_id);
 
     auto uevent_path = ByteString::formatted("/sys/class/drm/{}/device/uevent", card_name);
     auto uevent_or_error = Core::File::open(uevent_path, Core::File::OpenMode::Read);
@@ -197,7 +203,8 @@ bool configure_intel_haswell_vulkan_icd_if_needed()
     if (!icd_path.has_value())
         return false;
 
-    // Haswell only works with Mesa hasvk. Replace a non-hasvk ICD (e.g. iris) so Vulkan init does not hang.
+    // Haswell only works with Mesa hasvk. Replace a non-hasvk ICD (e.g. iris/anv) so accidental
+    // Vulkan probes do not load an incompatible driver.
     (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     return true;
@@ -208,9 +215,11 @@ bool should_force_cpu_painting_for_haswell_gpu()
     if (!system_has_intel_haswell_gpu())
         return false;
 
-    // When Mesa hasvk cannot be located or pinned, probing the default Intel Vulkan ICD on Haswell
-    // can hang vkCreateInstance and leave the UI unresponsive.
-    return !configure_intel_haswell_vulkan_icd_if_needed();
+    // Always prefer CPU painting on Haswell. Mesa hasvk is incomplete; probing either anv or hasvk
+    // from the Qt UI / compositor can hang and leave an unresponsive native window capturing input.
+    // Still pin hasvk when available so any accidental Vulkan probe uses the least-bad ICD.
+    (void)configure_intel_haswell_vulkan_icd_if_needed();
+    return true;
 }
 
 }
