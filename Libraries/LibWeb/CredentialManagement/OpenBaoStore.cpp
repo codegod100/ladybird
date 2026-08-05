@@ -156,6 +156,22 @@ static size_t curl_write_callback(char* ptr, size_t size, size_t nmemb, void* us
     return total;
 }
 
+static ErrorOr<void> ensure_curl_global_init()
+{
+    // RequestServer initializes libcurl in its own process; Ladybird/LibWeb does not.
+    // curl_easy_init() without curl_global_init() is undefined behavior.
+    static int init_state = 0; // 0 = unset, 1 = ok, -1 = failed
+    if (init_state == 0) {
+        auto result = curl_global_init(CURL_GLOBAL_DEFAULT);
+        init_state = (result == CURLE_OK) ? 1 : -1;
+        if (init_state < 0)
+            dbgln("OpenBao: curl_global_init failed: {}", curl_easy_strerror(result));
+    }
+    if (init_state < 0)
+        return Error::from_string_literal("curl_global_init failed");
+    return {};
+}
+
 struct HttpResponse {
     long status { 0 };
     ByteString body;
@@ -163,6 +179,8 @@ struct HttpResponse {
 
 static ErrorOr<HttpResponse> http_request(OpenBaoConfig const& config, ByteString const& method, ByteString const& path, Optional<ByteString> const& body = {})
 {
+    TRY(ensure_curl_global_init());
+
     auto* curl = curl_easy_init();
     if (!curl)
         return Error::from_string_literal("curl_easy_init failed");
@@ -299,6 +317,14 @@ static ErrorOr<void> delete_kv_record(OpenBaoConfig const& config, ByteString co
     caches().passkeys.clear();
     caches().passkeys_at.clear();
     return {};
+}
+
+static ByteString scheme_from_origin(ByteString const& origin)
+{
+    auto scheme_end = origin.find("://"sv);
+    if (!scheme_end.has_value())
+        return {};
+    return origin.substring(0, *scheme_end);
 }
 
 static ByteString host_from_origin(ByteString const& origin)
@@ -505,14 +531,19 @@ ErrorOr<Optional<PasswordEntry>> OpenBaoStore::find_password(ByteString const& o
     auto listed = TRY(list_passwords());
     Optional<PasswordEntry> host_match;
     auto want_host = host_from_origin(origin);
+    auto want_scheme = scheme_from_origin(origin);
     for (auto& entry : listed) {
         if (username.has_value() && entry.username != *username)
             continue;
         if (entry.origin == origin)
             return entry;
+        // Host fallback must keep the same scheme so http:// cannot receive https:// secrets.
         auto entry_host = entry.host.is_empty() ? host_from_origin(entry.origin) : entry.host;
-        if (!host_match.has_value() && !want_host.is_empty() && entry_host == want_host)
+        auto entry_scheme = scheme_from_origin(entry.origin);
+        if (!host_match.has_value() && !want_host.is_empty() && !want_scheme.is_empty()
+            && entry_host == want_host && entry_scheme == want_scheme) {
             host_match = entry;
+        }
     }
     return host_match;
 }
@@ -613,12 +644,27 @@ ErrorOr<void> OpenBaoStore::store_passkey(PasskeyEntry const& entry)
     return {};
 }
 
-ErrorOr<Optional<PasskeyEntry>> OpenBaoStore::find_passkey(ByteString const& rp_id)
+ErrorOr<Optional<PasskeyEntry>> OpenBaoStore::find_passkey(ByteString const& rp_id, Optional<Vector<ByteString>> const& allowed_credential_ids_b64)
 {
+    if (allowed_credential_ids_b64.has_value() && allowed_credential_ids_b64->is_empty())
+        return OptionalNone {};
+
     auto all = TRY(list_passkeys());
     for (auto& entry : all) {
-        if (entry.rp_id == rp_id)
-            return entry;
+        if (entry.rp_id != rp_id)
+            continue;
+        if (allowed_credential_ids_b64.has_value()) {
+            bool allowed = false;
+            for (auto const& id : *allowed_credential_ids_b64) {
+                if (id == entry.credential_id_b64) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed)
+                continue;
+        }
+        return entry;
     }
     return OptionalNone {};
 }

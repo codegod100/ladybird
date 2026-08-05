@@ -89,7 +89,6 @@
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/CustomEvent.h>
 #include <LibWeb/DOM/DOMImplementation.h>
-#include <LibWeb/CredentialManagement/PasswordAutofill.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/DocumentObserver.h>
@@ -4296,10 +4295,8 @@ void Document::completely_finish_loading()
 {
     m_ongoing_navigation_fetch_controller = nullptr;
 
-    // AD-HOC: OpenBao password autofill (passwordmgr overlay)
-    HTML::queue_global_task(HTML::Task::Source::DOMManipulation, HTML::relevant_global_object(*this), GC::create_function(heap(), [this] {
-        CredentialManagement::PasswordAutofill::try_fill_document(*this);
-    }));
+    // AD-HOC: Do not silent-autofill passwords on load. Fill only when the user
+    // focuses a password field (see HTMLInputElement).
 
     // 2. Set document's completely loaded time to the current time.
     // AD-HOC: Set this unconditionally, even if the document has no navigable yet.

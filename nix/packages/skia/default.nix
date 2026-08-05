@@ -118,7 +118,11 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
 
     mkdir -p $out/lib
-    cp *.so *.a *.dylib $out/lib
+    shopt -s nullglob
+    for lib in *.so *.a *.dylib; do
+      cp "$lib" $out/lib/
+    done
+    shopt -u nullglob
 
     pushd ../../include
     find . -name '*.h' -exec install -Dm644 {} $out/include/skia/{} \;

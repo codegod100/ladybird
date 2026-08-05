@@ -54,7 +54,7 @@ done
 
 # Host toolchains (e.g. rustup under /usr/local/cargo) must not shadow Nix's.
 scrub_path() {
-  echo "$1" | tr ':' '\n' | grep -v '/usr/local/cargo' | grep -v '/.cargo/' | paste -sd: -
+  echo "$1" | tr ':' '\n' | grep -Fv '/usr/local/cargo' | grep -Fv '/.cargo/' | paste -sd: -
 }
 
 export PATH
@@ -83,7 +83,7 @@ develop() {
 
 setup_env_snippet="
   set -eo pipefail
-  export PATH=\"\$(echo \"\$PATH\" | tr ':' '\\n' | grep -v /usr/local/cargo | grep -v /.cargo/ | paste -sd: -)\"
+  export PATH=\"\$(echo \"\$PATH\" | tr ':' '\\n' | grep -Fv /usr/local/cargo | grep -Fv /.cargo/ | paste -sd: -)\"
   unset CARGO_HOME RUSTUP_HOME
   : \"\${src:?missing src}\" \"\${cmakeFlags:?missing cmakeFlags}\"
   source \"\$stdenv/setup\"

@@ -50,7 +50,9 @@ public:
     static ErrorOr<void> delete_password(ByteString const& origin, ByteString const& username);
 
     static ErrorOr<void> store_passkey(PasskeyEntry const&);
-    static ErrorOr<Optional<PasskeyEntry>> find_passkey(ByteString const& rp_id);
+    // If allowed_credential_ids_b64 is present, only those credential IDs may match.
+    // An empty vector means "no credential is allowed" (WebAuthn allowCredentials = []).
+    static ErrorOr<Optional<PasskeyEntry>> find_passkey(ByteString const& rp_id, Optional<Vector<ByteString>> const& allowed_credential_ids_b64 = {});
     static ErrorOr<Vector<PasskeyEntry>> list_passkeys();
     static ErrorOr<void> delete_passkey(ByteString const& rp_id, ByteString const& credential_id_b64);
 

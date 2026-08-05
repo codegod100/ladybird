@@ -108,9 +108,6 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
     auto& vm = this->vm();
     auto& realm = this->realm();
 
-    // AD-HOC: OpenBao password save (passwordmgr overlay)
-    CredentialManagement::PasswordAutofill::maybe_save_from_form(*this);
-
     // 1. If form cannot navigate, then return.
     if (cannot_navigate())
         return {};
@@ -189,6 +186,9 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
         if (cannot_navigate())
             return {};
     }
+
+    // AD-HOC: OpenBao password save — only after abort checks / submit cancellation.
+    CredentialManagement::PasswordAutofill::maybe_save_from_form(*this);
 
     // 6. Let encoding be the result of picking an encoding for the form.
     auto encoding = TRY_OR_THROW_OOM(vm, pick_an_encoding());

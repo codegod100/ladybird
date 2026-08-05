@@ -10,10 +10,12 @@
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 #include <LibCrypto/Curves/SECPxxxr1.h>
 #include <LibCrypto/Hash/SHA2.h>
+#include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibURL/Origin.h>
 #include <LibWeb/CredentialManagement/OpenBaoStore.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/WebAuthn/AuthenticatorAssertionResponse.h>
 #include <LibWeb/WebAuthn/AuthenticatorAttestationResponse.h>
@@ -134,10 +136,10 @@ static WebIDL::ExceptionOr<ByteBuffer> make_authenticator_data(JS::Realm& realm,
     if (auth_data.try_append(rp_hash).is_error())
         return WebIDL::UnknownError::create(realm, "OOM"_utf16);
 
-    // Match openbao-passkeys / synced passkeys: UP | UV | BE | BS.
-    // Pocket ID (go-webauthn) rejects assertions that omit BE/BS when the
-    // credential was registered as a multi-device / backup-eligible passkey.
-    u8 flags = 0x01 | 0x04 | 0x08 | 0x10; // UP | UV | BE | BS
+    // UP | BE | BS — do not claim UV without a real user-verification step.
+    // Keep BE/BS so multi-device / backup-eligible registrations stay compatible
+    // with go-webauthn (Pocket ID) when those bits were set at create time.
+    u8 flags = 0x01 | 0x08 | 0x10; // UP | BE | BS
     if (include_attested)
         flags |= 0x40; // AT
     if (auth_data.try_append(flags).is_error())
@@ -172,20 +174,73 @@ static WebIDL::ExceptionOr<ByteBuffer> make_authenticator_data(JS::Realm& realm,
     return auth_data;
 }
 
+static WebIDL::ExceptionOr<void> ensure_rp_id_bound_to_origin(JS::Realm& realm, ByteString const& rp_id, URL::Origin const& origin)
+{
+    if (origin.is_opaque())
+        return WebIDL::SecurityError::create(realm, "Passkey RP ID not allowed for opaque origin"_utf16);
+    auto rp_id_utf16 = Utf16String::from_utf8(rp_id);
+    if (!DOM::is_a_registrable_domain_suffix_of_or_is_equal_to(rp_id_utf16, origin.host()))
+        return WebIDL::SecurityError::create(realm, "Passkey RP ID is not valid for this origin"_utf16);
+    return {};
+}
+
 static WebIDL::ExceptionOr<ByteString> resolve_rp_id(JS::Realm& realm, JS::Object const& public_key_options, URL::Origin const& origin)
 {
     auto& vm = realm.vm();
+    ByteString rp_id;
     auto rp_value = TRY(public_key_options.get("rp"_utf16_fly_string));
     if (rp_value.is_object()) {
         auto id_value = TRY(rp_value.as_object().get("id"_utf16_fly_string));
         if (!id_value.is_undefined()) {
             auto string = TRY(WebIDL::to_byte_string(vm, id_value));
-            return to_byte_string(string);
+            rp_id = to_byte_string(string);
         }
     }
-    if (origin.is_opaque())
-        return WebIDL::NotAllowedError::create(realm, "Passkey RP ID missing"_utf16);
-    return to_byte_string(origin.host().serialize());
+    if (rp_id.is_empty()) {
+        if (origin.is_opaque())
+            return WebIDL::NotAllowedError::create(realm, "Passkey RP ID missing"_utf16);
+        rp_id = to_byte_string(origin.host().serialize());
+    }
+    TRY(ensure_rp_id_bound_to_origin(realm, rp_id, origin));
+    return rp_id;
+}
+
+static WebIDL::ExceptionOr<Optional<Vector<ByteString>>> credential_id_list_from_options(JS::Realm& realm, JS::Object const& public_key_options, Utf16FlyString const& property_name)
+{
+    auto& vm = realm.vm();
+    auto value = TRY(public_key_options.get(property_name));
+    if (value.is_undefined() || value.is_null())
+        return OptionalNone {};
+    if (!value.is_object())
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Expected credential descriptor list"_utf16 };
+
+    auto& object = value.as_object();
+    auto length = TRY(JS::length_of_array_like(vm, object));
+    Vector<ByteString> ids;
+    ids.ensure_capacity(length);
+    for (size_t i = 0; i < length; ++i) {
+        auto item = TRY(object.get(i));
+        if (!item.is_object())
+            continue;
+        auto id_value = TRY(item.as_object().get("id"_utf16_fly_string));
+        auto id_bytes = TRY(buffer_from_js(realm, id_value));
+        auto id_b64 = TRY(lift_string(realm, encode_base64url(id_bytes, AK::OmitPadding::Yes)));
+        ids.append(ByteString { id_b64.bytes() });
+    }
+    return ids;
+}
+
+static bool credential_id_is_listed(ByteBuffer const& credential_id, Vector<ByteString> const& listed_ids_b64)
+{
+    auto id_b64_or_error = encode_base64url(credential_id, AK::OmitPadding::Yes);
+    if (id_b64_or_error.is_error())
+        return false;
+    auto id_b64 = ByteString { id_b64_or_error.value().bytes() };
+    for (auto const& listed : listed_ids_b64) {
+        if (listed == id_b64)
+            return true;
+    }
+    return false;
 }
 
 WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_create_credential(JS::Realm& realm, JS::Object const& public_key_options)
@@ -199,6 +254,16 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_create_credential(JS:
     if (!user_value.is_object())
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "publicKey.user required"_utf16 };
     auto user_handle = TRY(buffer_from_js(realm, TRY(user_value.as_object().get("id"_utf16_fly_string))));
+
+    if (auto exclude = TRY(credential_id_list_from_options(realm, public_key_options, "excludeCredentials"_utf16_fly_string)); exclude.has_value() && !exclude->is_empty()) {
+        auto existing = CredentialManagement::OpenBaoStore::find_passkey(rp_id, exclude);
+        if (!existing.is_error() && existing.value().has_value())
+            return WebIDL::InvalidStateError::create(realm, "Passkey already exists for excludeCredentials"_utf16);
+        for (auto const& entry : passkey_store()) {
+            if (entry.rp_id == rp_id && credential_id_is_listed(entry.credential_id, *exclude))
+                return WebIDL::InvalidStateError::create(realm, "Passkey already exists for excludeCredentials"_utf16);
+        }
+    }
 
     ::Crypto::Curves::SECP256r1 curve;
     auto private_key_or_error = curve.generate_private_key();
@@ -263,10 +328,8 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
 {
     auto& vm = realm.vm();
     auto origin = HTML::current_settings_object().origin();
-    dbgln("WebAuthn get: origin={}", origin.serialize());
 
     auto challenge = TRY(buffer_from_js(realm, TRY(public_key_options.get("challenge"_utf16_fly_string))));
-    dbgln("WebAuthn get: challenge_bytes={}", challenge.size());
 
     ByteString rp_id;
     auto rp_id_value = TRY(public_key_options.get("rpId"_utf16_fly_string));
@@ -278,15 +341,16 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
     } else {
         return WebIDL::NotAllowedError::create(realm, "Passkey RP ID missing"_utf16);
     }
-    dbgln("WebAuthn get: rpId={}", rp_id);
+    TRY(ensure_rp_id_bound_to_origin(realm, rp_id, origin));
+
+    auto allow_credentials = TRY(credential_id_list_from_options(realm, public_key_options, "allowCredentials"_utf16_fly_string));
 
     ByteBuffer credential_id;
     ByteBuffer user_handle;
     ByteBuffer private_key_bytes;
     u32 sign_count = 0;
 
-    auto openbao = CredentialManagement::OpenBaoStore::find_passkey(rp_id);
-    dbgln("WebAuthn get: openbao find error={} has={}", openbao.is_error(), !openbao.is_error() && openbao.value().has_value());
+    auto openbao = CredentialManagement::OpenBaoStore::find_passkey(rp_id, allow_credentials);
     if (!openbao.is_error() && openbao.value().has_value()) {
         auto entry = openbao.value().release_value();
         auto decoded_id = TRY(lift(realm, decode_base64url(entry.credential_id_b64)));
@@ -300,12 +364,17 @@ WebIDL::ExceptionOr<GC::Ref<PublicKeyCredential>> software_get_credential(JS::Re
         if (auto stored = CredentialManagement::OpenBaoStore::store_passkey(entry); stored.is_error())
             dbgln("OpenBao passkey signCount update failed: {}", stored.error());
     } else {
+        if (allow_credentials.has_value() && allow_credentials->is_empty())
+            return WebIDL::NotAllowedError::create(realm, "No software passkey for allowCredentials"_utf16);
+
         StoredPasskey* match = nullptr;
         for (auto& entry : passkey_store()) {
-            if (entry.rp_id == rp_id) {
-                match = &entry;
-                break;
-            }
+            if (entry.rp_id != rp_id)
+                continue;
+            if (allow_credentials.has_value() && !credential_id_is_listed(entry.credential_id, *allow_credentials))
+                continue;
+            match = &entry;
+            break;
         }
         if (!match)
             return WebIDL::NotAllowedError::create(realm, "No software passkey for this RP"_utf16);
