@@ -14,4 +14,4 @@ nix run                   # launch Ladybird
 
 Binary cache: [`codegod100`](https://app.cachix.org/cache/codegod100) (via `nixConfig`).
 
-CI: `.github/workflows/nix.yml` builds on nixbuild.net and pushes to Cachix.
+CI: `.github/workflows/nix.yml` uses the [nixbuild.net CI workflow](https://github.com/nixbuild/nixbuild-action/blob/v26/.github/workflows/ci-workflow.yml) (`ci-workflow.yml@v26`) to build on nixbuild.net; master pushes outputs to Cachix.
