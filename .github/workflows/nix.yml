@@ -1,0 +1,184 @@
+# Build all flake packages on nixbuild.net, then push to Cachix.
+# GHA runners only evaluate/orchestrate — no local compiles.
+#
+# Auth:
+#   GitHub secret NIXBUILD_TOKEN, or OPENBAO_TOKEN/BAO_TOKEN that can read
+#   secret/data/ai-api-keys → NIXBUILD_TOKEN (+ optional CACHIX_AUTH_TOKEN)
+name: Nix
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: List package attrs
+        id: list
+        run: |
+          set -euo pipefail
+          system="$(nix eval --raw --impure --expr 'builtins.currentSystem')"
+          packages="$(
+            nix eval --json ".#packages.${system}" --apply 'builtins.attrNames' \
+              | jq -c '[.[] | select(. != "default" and . != "update")] | sort'
+          )"
+          count="$(jq 'length' <<<"$packages")"
+          if [ "$count" -eq 0 ]; then
+            echo "error: no packages found for ${system}" >&2
+            exit 1
+          fi
+          echo "Found ${count} packages for ${system}: $(jq -r 'join(", ")' <<<"$packages")"
+          echo "packages=${packages}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.package }}
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.discover.outputs.packages) }}
+    steps:
+      - name: Load tokens (GitHub secret or OpenBao ai-api-keys)
+        id: tokens
+        env:
+          NIXBUILD_TOKEN_SECRET: ${{ secrets.NIXBUILD_TOKEN }}
+          CACHIX_AUTH_TOKEN_SECRET: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          OPENBAO_TOKEN: ${{ secrets.OPENBAO_TOKEN || secrets.BAO_TOKEN || secrets.VAULT_TOKEN }}
+          BAO_ADDR: ${{ secrets.BAO_ADDR || secrets.OPENBAO_ADDR || secrets.VAULT_ADDR || 'https://openbao.boxd.sh' }}
+        run: |
+          set -euo pipefail
+          nixbuild_token="${NIXBUILD_TOKEN_SECRET:-}"
+          cachix_token="${CACHIX_AUTH_TOKEN_SECRET:-}"
+
+          if { [ -z "$nixbuild_token" ] || [ -z "$cachix_token" ]; } && [ -n "${OPENBAO_TOKEN:-}" ]; then
+            addr="${BAO_ADDR%/}"
+            echo "Fetching missing CI tokens from OpenBao ${addr} (secret/data/ai-api-keys)"
+            json="$(curl -fsS -H "X-Vault-Token: ${OPENBAO_TOKEN}" "${addr}/v1/secret/data/ai-api-keys")"
+            if [ -z "$nixbuild_token" ]; then
+              nixbuild_token="$(jq -r '.data.data.NIXBUILD_TOKEN // empty' <<<"$json")"
+            fi
+            if [ -z "$cachix_token" ]; then
+              cachix_token="$(jq -r '.data.data.CACHIX_AUTH_TOKEN // empty' <<<"$json")"
+            fi
+          fi
+
+          if [ -z "$nixbuild_token" ]; then
+            echo "::error::NIXBUILD_TOKEN is required (GitHub secret, or OPENBAO_TOKEN/BAO_TOKEN → secret/data/ai-api-keys). All compiles run on nixbuild.net."
+            exit 1
+          fi
+
+          echo "::add-mask::${nixbuild_token}"
+          {
+            echo "nixbuild_token<<EOF"
+            echo "${nixbuild_token}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -n "$cachix_token" ]; then
+            echo "::add-mask::${cachix_token}"
+            {
+              echo "cachix_auth_token<<EOF"
+              echo "${cachix_token}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            accept-flake-config = true
+
+      # Cachix must install before nixbuild-action: that action rewires
+      # NIX_CONFIG builders to ssh-ng://nixbuild, and nix-daemon (root) cannot
+      # use the job's NIX_SSHOPTS — so `nix-env -iA cachix` fails afterward.
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: codegod100
+          authToken: ${{ steps.tokens.outputs.cachix_auth_token || secrets.CACHIX_AUTH_TOKEN }}
+          # Pull always. Push from main and same-repo PRs (so matrix jobs can
+          # share e.g. skia → ladybird). Fork PRs stay pull-only.
+          skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+
+      - name: Setup nixbuild.net
+        uses: nixbuild/nixbuild-action@v25
+        with:
+          nixbuild_token: ${{ steps.tokens.outputs.nixbuild_token }}
+          generate_summary_for: job
+
+      - name: Require Cachix write token on main
+        if: github.ref == 'refs/heads/master'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ steps.tokens.outputs.cachix_auth_token || secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [ -z "${CACHIX_AUTH_TOKEN}" ]; then
+            echo "::error::CACHIX_AUTH_TOKEN is not set (GitHub secret or OpenBao ai-api-keys)."
+            exit 1
+          fi
+
+      - name: Build .#${{ matrix.package }} on nixbuild.net
+        run: |
+          set -euo pipefail
+          pkg='${{ matrix.package }}'
+          results="$(mktemp)"
+          # Remote-store build: nixbuild.net compiles; runner only evaluates + copies.
+          nix build --print-build-logs --json \
+            --eval-store auto \
+            --store ssh-ng://nixbuild \
+            --builders "" \
+            --max-jobs 2 \
+            ".#${pkg}" | tee "$results"
+          mapfile -t paths < <(jq -r '.[].outputs | to_entries[].value' "$results")
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "error: nix build produced no outputs for .#${pkg}" >&2
+            exit 1
+          fi
+          nix copy --from ssh-ng://nixbuild --to auto "${paths[@]}"
+          nix path-info -rS "${paths[@]}" | tail -n 20
+
+  # Single status gate for branch rules / auto-merge ("CI success").
+  ci-success:
+    name: Nix success
+    needs: [discover, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require discover + all matrix builds
+        run: |
+          set -euo pipefail
+          echo "discover=${{ needs.discover.result }} build=${{ needs.build.result }}"
+          test "${{ needs.discover.result }}" = "success"
+          test "${{ needs.build.result }}" = "success"
