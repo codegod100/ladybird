@@ -10,7 +10,7 @@ namespace WebView {
 
 // Intel Haswell (Gen 7.5) only supports Vulkan via Mesa's hasvk driver. When every ICD is
 // visible, vkCreateInstance often returns VK_ERROR_INCOMPATIBLE_DRIVER and GPU presentation
-// never comes up. Pin hasvk when we detect those GPUs unless the user already chose an ICD.
+// never comes up. Pin hasvk when we detect those GPUs, replacing a non-hasvk ICD if needed.
 bool configure_intel_haswell_vulkan_icd_if_needed();
 
 // Returns true when the machine has an Intel Haswell (HD Graphics 4xxx) GPU.

@@ -104,7 +104,10 @@ WebContentView::WebContentView(QWidget* window, RefPtr<WebView::WebContentClient
     setFocusPolicy(Qt::FocusPolicy::StrongFocus);
 
 #ifdef LADYBIRD_QT_USE_VULKAN_WINDOW
-    create_vulkan_window();
+    // CPU painting shares frames via QWidget::paintEvent. Skip QVulkanInstance creation so we do not
+    // probe incompatible drivers (notably Intel Haswell without Mesa hasvk), which can hang and grow memory.
+    if (WebView::Application::web_content_options().force_cpu_painting == WebView::ForceCPUPainting::No)
+        create_vulkan_window();
 #endif
 
     m_device_pixel_ratio = devicePixelRatio();
