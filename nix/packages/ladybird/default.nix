@@ -50,7 +50,6 @@
   wrapGAppsHook3,
   gtk3,
   gsettings-desktop-schemas,
-  mesa,
 }:
 
 let
@@ -210,14 +209,13 @@ stdenv.mkDerivation (finalAttrs: {
   # word-split (required for multiline --run with wrapQtAppsHook).
   __structuredAttrs = true;
 
-  # Haswell (Intel HD 4xxx) only works via Mesa hasvk. Pin hasvk on those GPUs when the
-  # environment does not already select hasvk, replacing a non-hasvk ICD if needed.
+  # Haswell (Intel HD 4xxx): incomplete Vulkan hangs Qt/Wayland. Wrapper disables Vulkan ICD
+  # discovery and prefers Qt software OpenGL before the binary starts.
   postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
     if [ -x "$out/bin/Ladybird" ]; then
       mv "$out/bin/Ladybird" "$out/bin/.Ladybird-qtwrapped"
       substitute ${./hasvk-wrapper.sh} "$out/bin/Ladybird" \
-        --subst-var-by ladybird "$out/bin/.Ladybird-qtwrapped" \
-        --subst-var-by hasvk_icd "${mesa}/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
+        --subst-var-by ladybird "$out/bin/.Ladybird-qtwrapped"
       chmod +x "$out/bin/Ladybird"
     fi
   '';

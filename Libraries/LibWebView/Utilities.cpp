@@ -79,7 +79,9 @@ static LexicalPath find_prefix(LexicalPath const& application_directory)
 
 void platform_init(Optional<ByteString> ladybird_binary_path)
 {
-    configure_intel_haswell_vulkan_icd_if_needed();
+    // Haswell: disable Vulkan ICD discovery + prefer Qt software GL before QGuiApplication.
+    // Do not pin hasvk here — incomplete hasvk still hangs the UI present path.
+    (void)apply_haswell_gpu_workarounds();
 
     s_ladybird_binary_path = move(ladybird_binary_path);
 

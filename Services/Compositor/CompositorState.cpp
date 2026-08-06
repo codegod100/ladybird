@@ -68,7 +68,13 @@ void CompositorState::destroy_contexts_for_web_content_client(CompositorStateWeb
 
 void CompositorState::create_context(Web::Compositor::CompositorContextId context_id, Optional<u64> page_id, CompositorStateWebContentClient& web_content_client)
 {
-    VERIFY(!m_contexts.contains(context_id));
+    // After a compositor restart, WebContent can re-send create_context for an id that already
+    // survived in UI-side bookkeeping. VERIFY used to abort here (SIGILL), which restart-loops the
+    // compositor and leaves the Qt UI wedged on Haswell. Treat duplicates as a no-op reconnect.
+    if (m_contexts.contains(context_id)) {
+        dbgln("Ignoring duplicate create_context for context_id={}", context_id);
+        return;
+    }
     if (page_id.has_value())
         VERIFY(context_id == Web::Compositor::compositor_context_id_for_page(*page_id));
 

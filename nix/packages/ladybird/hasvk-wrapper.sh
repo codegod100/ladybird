@@ -1,6 +1,9 @@
 #!/bin/sh
-# Pin Mesa hasvk on Intel Haswell when Vulkan ICD is unset or points at a non-hasvk driver.
-# @ladybird@ and @hasvk_icd@ are substituted at install time.
+# Haswell (HD Graphics 4xxx) GPU workaround for the Ladybird UI process.
+# @ladybird@ is substituted at install time.
+#
+# Incomplete Mesa hasvk (and anv) hang Qt/Wayland present on this GPU. Do not pin hasvk —
+# disable Vulkan ICD discovery and force Qt software OpenGL before the binary starts.
 #
 # POSIX sh only: do not use bash `exec -a` (dash /bin/sh rejects it with
 # "exec: -a: not found"). argv0 from the wrapper path is not required for
@@ -43,39 +46,13 @@ _haswell_gpu() {
   return 1
 }
 
-_icd_points_at_hasvk() {
-  case "$1" in
-    *hasvk*) return 0 ;;
-  esac
-  return 1
-}
-
-_should_pin_hasvk() {
-  if ! _haswell_gpu; then
-    return 1
-  fi
-  if [ -n "${VK_ICD_FILENAMES:-}" ] && _icd_points_at_hasvk "$VK_ICD_FILENAMES"; then
-    return 1
-  fi
-  if [ -n "${VK_DRIVER_FILES:-}" ] && _icd_points_at_hasvk "$VK_DRIVER_FILES"; then
-    return 1
-  fi
-  return 0
-}
-
-if _should_pin_hasvk; then
-  _hasvk=""
-  if [ -r "@hasvk_icd@" ]; then
-    _hasvk="@hasvk_icd@"
-  elif [ -r "/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json" ]; then
-    _hasvk="/run/opengl-driver/share/vulkan/icd.d/intel_hasvk_icd.x86_64.json"
-  fi
-
-  if [ -n "$_hasvk" ]; then
-    export LADYBIRD_HASVK_ICD="$_hasvk"
-    export VK_ICD_FILENAMES="$_hasvk"
-    export VK_DRIVER_FILES="$_hasvk"
-  fi
+if _haswell_gpu; then
+  # Fail Vulkan discovery immediately (non-existent ICD path).
+  export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/var/empty/ladybird-disabled-vulkan-icd.json}"
+  export VK_DRIVER_FILES="${VK_DRIVER_FILES:-/var/empty/ladybird-disabled-vulkan-icd.json}"
+  # Prefer software GL for Qt's platform integration before QGuiApplication starts.
+  export QT_OPENGL="${QT_OPENGL:-software}"
+  export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
 fi
 
 exec "@ladybird@" "$@"

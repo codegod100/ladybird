@@ -12,6 +12,7 @@
 #include <AK/Optional.h>
 #include <LibGfx/SharedImageBuffer.h>
 #include <LibWebView/Application.h>
+#include <LibWebView/HaswellVulkanWorkaround.h>
 #include <UI/Qt/NativeWindowContainer.h>
 #include <UI/Qt/WebContentView.h>
 
@@ -43,6 +44,10 @@ static QByteArrayList vulkan_dmabuf_device_extensions()
 
 static QVulkanInstance* vulkan_instance()
 {
+    // Haswell Vulkan probes hang the UI even when CPU painting is selected for content frames.
+    if (WebView::system_has_intel_haswell_gpu())
+        return nullptr;
+
     static QVulkanInstance* instance = []() -> QVulkanInstance* {
         auto* instance = new QVulkanInstance;
         auto supported_version = instance->supportedApiVersion();
