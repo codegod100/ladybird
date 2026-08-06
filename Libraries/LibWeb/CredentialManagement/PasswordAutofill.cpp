@@ -5,7 +5,11 @@
  */
 
 #include <AK/ByteString.h>
+#include <AK/Function.h>
 #include <AK/Utf16String.h>
+#include <LibCore/EventLoop.h>
+#include <LibGC/Root.h>
+#include <LibThreading/ThreadPool.h>
 #include <LibWeb/CredentialManagement/OpenBaoStore.h>
 #include <LibWeb/CredentialManagement/PasswordAutofill.h>
 #include <LibWeb/DOM/Document.h>
@@ -167,20 +171,6 @@ LoginFields find_login_fields_for_password(HTML::HTMLInputElement& password)
     return find_login_fields_in_scope(password.root(), &password);
 }
 
-Optional<PasswordEntry> lookup_entry_for_document(DOM::Document& document)
-{
-    if (document.origin().is_opaque())
-        return {};
-
-    auto origin = string_to_byte_string(document.origin().serialize());
-    auto found = OpenBaoStore::find_password(origin);
-    if (found.is_error()) {
-        dbgln("PasswordAutofill: OpenBao lookup failed: {}", found.error());
-        return {};
-    }
-    return found.release_value();
-}
-
 void fill_fields(LoginFields const& fields, PasswordEntry const& entry)
 {
     if (fields.username && field_is_empty(*fields.username))
@@ -189,53 +179,101 @@ void fill_fields(LoginFields const& fields, PasswordEntry const& entry)
         set_field_value(*fields.password, entry.password);
 }
 
-}
-
-void PasswordAutofill::try_fill_document(DOM::Document& document)
+void fill_document_with_entry(DOM::Document& document, PasswordEntry const& entry)
 {
     if (!document.is_fully_active())
-        return;
-
-    auto entry = lookup_entry_for_document(document);
-    if (!entry.has_value())
         return;
 
     bool filled_any = false;
     document.for_each_in_inclusive_subtree_of_type<HTML::HTMLInputElement>([&](auto& input) {
         if (!is_fillable_password(input))
             return TraversalDecision::Continue;
-        auto fields = find_login_fields_for_password(input);
-        fill_fields(fields, *entry);
+        fill_fields(find_login_fields_for_password(input), entry);
         filled_any = true;
-        // One credential per origin is enough; stop after first password form.
         return TraversalDecision::Break;
     });
 
     if (filled_any)
-        dbgln("PasswordAutofill: filled login form for {}", entry->origin);
+        dbgln("PasswordAutofill: filled login form for {}", entry.origin);
+}
+
+void fill_password_field_with_entry(HTML::HTMLInputElement& password, PasswordEntry const& entry)
+{
+    if (!password.document().is_fully_active())
+        return;
+    if (!is_fillable_password(password))
+        return;
+
+    auto fields = find_login_fields_for_password(password);
+    if (!field_is_empty(password)) {
+        if (fields.username && field_is_empty(*fields.username))
+            set_field_value(*fields.username, entry.username);
+        return;
+    }
+
+    fill_fields(fields, entry);
+    dbgln("PasswordAutofill: filled from password field for {}", entry.origin);
+}
+
+void lookup_password_then(ByteString origin, Function<void(PasswordEntry const&)> apply)
+{
+    // Warm cache: stay on the content thread (no network).
+    if (OpenBaoStore::password_cache_is_fresh()) {
+        auto found = OpenBaoStore::find_password(origin);
+        if (found.is_error()) {
+            dbgln("PasswordAutofill: OpenBao lookup failed: {}", found.error());
+            return;
+        }
+        if (auto entry = found.release_value(); entry.has_value())
+            apply(*entry);
+        return;
+    }
+
+    // Cold cache: curl on the thread pool, fill back on the content event loop.
+    auto& main_loop = Core::EventLoop::current();
+    Threading::ThreadPool::the().submit([origin = move(origin), apply = move(apply), &main_loop]() mutable {
+        auto found = OpenBaoStore::find_password(origin);
+        main_loop.deferred_invoke([found = move(found), apply = move(apply)]() mutable {
+            if (found.is_error()) {
+                dbgln("PasswordAutofill: OpenBao lookup failed: {}", found.error());
+                return;
+            }
+            if (auto entry = found.release_value(); entry.has_value())
+                apply(*entry);
+        });
+    });
+}
+
+}
+
+void PasswordAutofill::try_fill_document(DOM::Document& document)
+{
+    if (!document.is_fully_active())
+        return;
+    if (document.origin().is_opaque())
+        return;
+
+    auto origin = string_to_byte_string(document.origin().serialize());
+    auto document_root = GC::make_root(document);
+    lookup_password_then(move(origin), [document_root](PasswordEntry const& entry) {
+        fill_document_with_entry(*document_root, entry);
+    });
 }
 
 void PasswordAutofill::try_fill_from_password_field(HTML::HTMLInputElement& password)
 {
     if (!is_fillable_password(password))
         return;
-    if (!field_is_empty(password)) {
-        // Password already typed; still try username if empty.
-        auto fields = find_login_fields_for_password(password);
-        auto entry = lookup_entry_for_document(password.document());
-        if (!entry.has_value())
-            return;
-        if (fields.username && field_is_empty(*fields.username))
-            set_field_value(*fields.username, entry->username);
-        return;
-    }
 
-    auto entry = lookup_entry_for_document(password.document());
-    if (!entry.has_value())
+    auto& document = password.document();
+    if (document.origin().is_opaque())
         return;
 
-    fill_fields(find_login_fields_for_password(password), *entry);
-    dbgln("PasswordAutofill: filled from password field for {}", entry->origin);
+    auto origin = string_to_byte_string(document.origin().serialize());
+    auto password_root = GC::make_root(password);
+    lookup_password_then(move(origin), [password_root](PasswordEntry const& entry) {
+        fill_password_field_with_entry(*password_root, entry);
+    });
 }
 
 void PasswordAutofill::maybe_save_from_form(HTML::HTMLFormElement& form)
@@ -259,11 +297,14 @@ void PasswordAutofill::maybe_save_from_form(HTML::HTMLFormElement& form)
         return;
 
     auto origin = string_to_byte_string(document.origin().serialize());
-    auto result = OpenBaoStore::store_password(origin, username, password);
-    if (result.is_error())
-        dbgln("PasswordAutofill: save failed: {}", result.error());
-    else
-        dbgln("PasswordAutofill: saved credentials for {}", origin);
+    // Persist off the content thread so submit never waits on OpenBao.
+    Threading::ThreadPool::the().submit([origin = move(origin), username = move(username), password = move(password)] {
+        auto result = OpenBaoStore::store_password(origin, username, password);
+        if (result.is_error())
+            dbgln("PasswordAutofill: save failed: {}", result.error());
+        else
+            dbgln("PasswordAutofill: saved credentials for {}", origin);
+    });
 }
 
 }
