@@ -18,6 +18,7 @@
 #include <LibCore/Environment.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 #include <LibCrypto/Curves/SECPxxxr1.h>
+#include <LibSync/Mutex.h>
 #include <LibWeb/CredentialManagement/OpenBaoStore.h>
 #include <curl/curl.h>
 
@@ -49,6 +50,14 @@ static ListCaches& caches()
     // Intentionally leaked to avoid an exit-time destructor (-Wexit-time-destructors).
     static ListCaches* cache = new ListCaches;
     return *cache;
+}
+
+static Sync::RecursiveMutex& store_mutex()
+{
+    // Protects caches() against concurrent autofill (thread pool) + Password Manager / CredMan.
+    // Recursive: store_password/delete_* call list_* while already locked.
+    static Sync::RecursiveMutex* mutex = new Sync::RecursiveMutex;
+    return *mutex;
 }
 
 static bool cache_fresh(Optional<MonotonicTime> const& at)
@@ -198,7 +207,9 @@ static ErrorOr<HttpResponse> http_request(OpenBaoConfig const& config, ByteStrin
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    // Autofill runs these on a worker thread; keep bounds tight so a dead OpenBao cannot sit for 30s.
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 8L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
 
     if (body.has_value()) {
@@ -268,6 +279,7 @@ static ErrorOr<Vector<ByteString>> list_kv_keys(OpenBaoConfig const& config, Byt
     return out;
 }
 
+// NOTE: Caller must hold store_mutex() (public OpenBaoStore entry points take it).
 static ErrorOr<Optional<JsonObject>> get_kv_record(OpenBaoConfig const& config, ByteString const& prefix, ByteString const& id)
 {
     auto key = record_cache_key(prefix, id);
@@ -493,6 +505,7 @@ static ErrorOr<PasskeyEntry> passkey_from_record(JsonObject const& record, ByteS
 
 ErrorOr<void> OpenBaoStore::store_password(ByteString const& origin, ByteString const& username, ByteString const& password)
 {
+    Sync::MutexLocker locker(store_mutex());
     auto config = TRY(load_config());
     auto existing = TRY(list_passwords());
     ByteString id;
@@ -527,8 +540,15 @@ ErrorOr<void> OpenBaoStore::store_password(ByteString const& origin, ByteString 
     return {};
 }
 
+bool OpenBaoStore::password_cache_is_fresh()
+{
+    Sync::MutexLocker locker(store_mutex());
+    return caches().passwords.has_value() && cache_fresh(caches().passwords_at);
+}
+
 ErrorOr<Optional<PasswordEntry>> OpenBaoStore::find_password(ByteString const& origin, Optional<ByteString> const& username)
 {
+    Sync::MutexLocker locker(store_mutex());
     auto listed = TRY(list_passwords());
     Optional<PasswordEntry> host_match;
     auto want_host = host_from_origin(origin);
@@ -551,6 +571,7 @@ ErrorOr<Optional<PasswordEntry>> OpenBaoStore::find_password(ByteString const& o
 
 ErrorOr<Vector<PasswordEntry>> OpenBaoStore::list_passwords()
 {
+    Sync::MutexLocker locker(store_mutex());
     if (caches().passwords.has_value() && cache_fresh(caches().passwords_at))
         return *caches().passwords;
 
@@ -574,6 +595,7 @@ ErrorOr<Vector<PasswordEntry>> OpenBaoStore::list_passwords()
 
 ErrorOr<void> OpenBaoStore::delete_password(ByteString const& origin, ByteString const& username)
 {
+    Sync::MutexLocker locker(store_mutex());
     auto config = TRY(load_config());
     auto listed = TRY(list_passwords());
     for (auto const& entry : listed) {
@@ -591,6 +613,7 @@ ErrorOr<void> OpenBaoStore::store_passkey(PasskeyEntry const& entry)
     if (entry.private_key_bytes.is_empty())
         return Error::from_string_literal("Refusing to store passkey with empty private key");
 
+    Sync::MutexLocker locker(store_mutex());
     auto config = TRY(load_config());
     auto user_b64 = TRY(encode_base64url(entry.user_handle, AK::OmitPadding::Yes));
     auto scalar_bytes = TRY(pad_or_trim_scalar_32(TRY(ByteBuffer::copy(entry.private_key_bytes))));
@@ -650,6 +673,7 @@ ErrorOr<Optional<PasskeyEntry>> OpenBaoStore::find_passkey(ByteString const& rp_
     if (allowed_credential_ids_b64.has_value() && allowed_credential_ids_b64->is_empty())
         return OptionalNone {};
 
+    Sync::MutexLocker locker(store_mutex());
     auto all = TRY(list_passkeys());
     for (auto& entry : all) {
         if (entry.rp_id != rp_id)
@@ -672,6 +696,7 @@ ErrorOr<Optional<PasskeyEntry>> OpenBaoStore::find_passkey(ByteString const& rp_
 
 ErrorOr<Vector<PasskeyEntry>> OpenBaoStore::list_passkeys()
 {
+    Sync::MutexLocker locker(store_mutex());
     if (caches().passkeys.has_value() && cache_fresh(caches().passkeys_at))
         return *caches().passkeys;
 
@@ -697,6 +722,7 @@ ErrorOr<Vector<PasskeyEntry>> OpenBaoStore::list_passkeys()
 
 ErrorOr<void> OpenBaoStore::delete_passkey(ByteString const& rp_id, ByteString const& credential_id_b64)
 {
+    Sync::MutexLocker locker(store_mutex());
     auto config = TRY(load_config());
     auto record = TRY(get_kv_record(config, config.passkeys_prefix, credential_id_b64));
     if (record.has_value()) {
@@ -709,6 +735,7 @@ ErrorOr<void> OpenBaoStore::delete_passkey(ByteString const& rp_id, ByteString c
 
 void OpenBaoStore::invalidate_cache()
 {
+    Sync::MutexLocker locker(store_mutex());
     caches().passwords.clear();
     caches().passwords_at.clear();
     caches().passkeys.clear();

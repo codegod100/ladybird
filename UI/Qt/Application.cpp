@@ -6,6 +6,7 @@
 
 #include <LibCore/ArgsParser.h>
 #include <LibURL/InternalURLs.h>
+#include <LibWebView/HaswellVulkanWorkaround.h>
 #include <LibWebView/HistoryStore.h>
 #include <LibWebView/URL.h>
 #include <UI/Qt/Application.h>
@@ -23,6 +24,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -381,6 +383,14 @@ Core::EventLoop& Application::create_platform_event_loop()
 {
     if (!browser_options().headless_mode.has_value()) {
         Core::EventLoopManager::install(*new EventLoopManagerQt);
+#if defined(AK_OS_LINUX)
+        // Must run before QApplication: Wayland/GL integration otherwise probes Haswell GPU and can hang.
+        if (WebView::system_has_intel_haswell_gpu()) {
+            (void)WebView::apply_haswell_gpu_workarounds();
+            QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
+            warnln("Intel Haswell GPU detected; using Qt software OpenGL + xcb (XWayland)");
+        }
+#endif
         m_application = make<LadybirdQApplication>(arguments());
 #if defined(AK_OS_LINUX)
         QGuiApplication::setDesktopFileName(QStringLiteral("org.ladybird.Ladybird"));

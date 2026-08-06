@@ -10,19 +10,22 @@
 
 namespace WebView {
 
-// Intel Haswell (Gen 7.5) only supports Vulkan via Mesa's hasvk driver. When every ICD is
-// visible, vkCreateInstance often returns VK_ERROR_INCOMPATIBLE_DRIVER and GPU presentation
-// never comes up. Pin hasvk when we detect those GPUs, replacing a non-hasvk ICD if needed.
-WEBVIEW_API bool configure_intel_haswell_vulkan_icd_if_needed();
-
 // Returns true when the machine has an Intel Haswell (HD Graphics 4xxx) GPU.
 WEBVIEW_API bool system_has_intel_haswell_gpu();
 
 // Returns true when VK_ICD_FILENAMES / VK_DRIVER_FILES points at Mesa's hasvk ICD.
 WEBVIEW_API bool haswell_hasvk_icd_is_configured();
 
-// Returns true when Haswell is present. Haswell Vulkan is incomplete enough that Ladybird should
-// prefer CPU painting instead of probing anv/hasvk from the UI or compositor.
+// Legacy helper: pin Mesa hasvk when present. Prefer apply_haswell_gpu_workarounds() —
+// incomplete hasvk still hangs Qt/Wayland and Skia Vulkan probes on Haswell.
+WEBVIEW_API bool configure_intel_haswell_vulkan_icd_if_needed();
+
+// On Haswell: force CPU painting, disable Vulkan ICD discovery (fail-fast), and push Qt onto
+// software OpenGL. Call from platform_init before QGuiApplication is constructed.
+// Returns true when Haswell workarounds were applied.
+WEBVIEW_API bool apply_haswell_gpu_workarounds();
+
+// Returns true when Haswell is present (and applies GPU workarounds as a side effect).
 WEBVIEW_API bool should_force_cpu_painting_for_haswell_gpu();
 
 }

@@ -19,6 +19,10 @@ namespace {
 
 static constexpr StringView hasvk_icd_filename = "intel_hasvk_icd.x86_64.json"sv;
 
+// Point Vulkan loader at a non-existent ICD so instance creation fails immediately instead of
+// hanging inside incomplete Haswell drivers (anv rejects Gen7.5; hasvk still wedges Qt/Wayland).
+static constexpr StringView disabled_vulkan_icd_path = "/var/empty/ladybird-disabled-vulkan-icd.json"sv;
+
 // Mesa hasvk Gen7.5 (Haswell) PCI device IDs (8086:xxxx).
 static constexpr Array<StringView, 40> haswell_pci_device_ids = {
     "0402"sv, "0406"sv, "040a"sv, "040b"sv, "040e"sv, "0412"sv, "0416"sv, "041a"sv, "041b"sv, "041e"sv,
@@ -155,6 +159,29 @@ static bool drm_device_is_intel_haswell(StringView card_name)
     return false;
 }
 
+static void disable_vulkan_icd_discovery()
+{
+    (void)Core::Environment::set("VK_ICD_FILENAMES"sv, disabled_vulkan_icd_path, Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("VK_DRIVER_FILES"sv, disabled_vulkan_icd_path, Core::Environment::Overwrite::Yes);
+}
+
+static void prefer_qt_software_opengl()
+{
+    // Must be set before QGuiApplication construction. AA_UseSoftwareOpenGL is also set from the Qt UI.
+    (void)Core::Environment::set("QT_OPENGL"sv, "software"sv, Core::Environment::Overwrite::Yes);
+    (void)Core::Environment::set("LIBGL_ALWAYS_SOFTWARE"sv, "1"sv, Core::Environment::Overwrite::Yes);
+}
+
+static void prefer_qt_xcb_platform()
+{
+    // Qt Wayland's EGL/GBM path still wedges the UI on Haswell even with CPU painting + software GL
+    // (observed: UI RSS ~1.5 GiB, zero event-loop progress). XWayland/xcb stays responsive (~150 MiB).
+    // Honor an explicit override if the user already chose a platform.
+    if (Core::Environment::get("LADYBIRD_ALLOW_WAYLAND"sv).has_value())
+        return;
+    (void)Core::Environment::set("QT_QPA_PLATFORM"sv, "xcb"sv, Core::Environment::Overwrite::Yes);
+}
+
 }
 
 namespace WebView {
@@ -203,10 +230,22 @@ bool configure_intel_haswell_vulkan_icd_if_needed()
     if (!icd_path.has_value())
         return false;
 
-    // Haswell only works with Mesa hasvk. Replace a non-hasvk ICD (e.g. iris/anv) so accidental
-    // Vulkan probes do not load an incompatible driver.
     (void)Core::Environment::set("VK_ICD_FILENAMES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
     (void)Core::Environment::set("VK_DRIVER_FILES"sv, icd_path.value().view(), Core::Environment::Overwrite::Yes);
+    return true;
+}
+
+bool apply_haswell_gpu_workarounds()
+{
+    if (!system_has_intel_haswell_gpu())
+        return false;
+
+    // Pinning hasvk used to be the workaround, but incomplete hasvk still hangs the Qt UI /
+    // Wayland present path and can grow resident memory until the event loop wedges. Fail Vulkan
+    // discovery immediately, keep presentation on CPU / software GL, and run Qt via XWayland.
+    disable_vulkan_icd_discovery();
+    prefer_qt_software_opengl();
+    prefer_qt_xcb_platform();
     return true;
 }
 
@@ -215,10 +254,7 @@ bool should_force_cpu_painting_for_haswell_gpu()
     if (!system_has_intel_haswell_gpu())
         return false;
 
-    // Always prefer CPU painting on Haswell. Mesa hasvk is incomplete; probing either anv or hasvk
-    // from the Qt UI / compositor can hang and leave an unresponsive native window capturing input.
-    // Still pin hasvk when available so any accidental Vulkan probe uses the least-bad ICD.
-    (void)configure_intel_haswell_vulkan_icd_if_needed();
+    (void)apply_haswell_gpu_workarounds();
     return true;
 }
 
@@ -229,6 +265,11 @@ bool should_force_cpu_painting_for_haswell_gpu()
 namespace WebView {
 
 bool configure_intel_haswell_vulkan_icd_if_needed()
+{
+    return false;
+}
+
+bool apply_haswell_gpu_workarounds()
 {
     return false;
 }

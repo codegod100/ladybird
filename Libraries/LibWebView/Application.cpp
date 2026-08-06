@@ -621,10 +621,13 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     }
 
     // Haswell Vulkan (anv and incomplete hasvk) can hang during GPU init and leave the Qt UI unresponsive.
-    // Prefer CPU painting on those GPUs so presentation stays on the QWidget bitmap path.
+    // Prefer CPU painting + software Qt GL on those GPUs so presentation stays off the GPU path.
     if (m_web_content_options.force_cpu_painting == ForceCPUPainting::No && should_force_cpu_painting_for_haswell_gpu()) {
-        warnln("Intel Haswell GPU detected; enabling --force-cpu-painting");
+        warnln("Intel Haswell GPU detected; enabling --force-cpu-painting and disabling Vulkan ICD discovery");
         m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
+    } else if (m_web_content_options.force_cpu_painting == ForceCPUPainting::Yes) {
+        // Explicit --force-cpu-painting on Haswell should still get the ICD/software-GL workarounds.
+        (void)apply_haswell_gpu_workarounds();
     }
 
     if (m_web_content_options.file_scheme_urls_have_tuple_origins == FileSchemeUrlsHaveTupleOrigins::Yes)
