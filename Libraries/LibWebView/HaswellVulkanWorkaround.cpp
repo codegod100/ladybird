@@ -6,6 +6,7 @@
 
 #include <AK/Array.h>
 #include <AK/LexicalPath.h>
+#include <AK/Optional.h>
 #include <AK/Platform.h>
 #include <LibCore/Directory.h>
 #include <LibCore/Environment.h>
@@ -188,6 +189,11 @@ namespace WebView {
 
 bool system_has_intel_haswell_gpu()
 {
+    // Cache: callers (Qt UI init, vulkan_instance, cpu-painting decision) may probe repeatedly.
+    static Optional<bool> cached;
+    if (cached.has_value())
+        return cached.value();
+
     bool found_haswell = false;
     auto flags = static_cast<Core::DirIterator::Flags>(Core::DirIterator::SkipDots | Core::DirIterator::NoStat);
     auto result = Core::Directory::for_each_entry("/sys/class/drm"sv, flags, [&](Core::DirectoryEntry const& entry, Core::Directory const&) -> ErrorOr<IterationDecision> {
@@ -206,7 +212,8 @@ bool system_has_intel_haswell_gpu()
         return IterationDecision::Continue;
     });
 
-    return !result.is_error() && found_haswell;
+    cached = !result.is_error() && found_haswell;
+    return cached.value();
 }
 
 bool haswell_hasvk_icd_is_configured()
@@ -251,11 +258,7 @@ bool apply_haswell_gpu_workarounds()
 
 bool should_force_cpu_painting_for_haswell_gpu()
 {
-    if (!system_has_intel_haswell_gpu())
-        return false;
-
-    (void)apply_haswell_gpu_workarounds();
-    return true;
+    return apply_haswell_gpu_workarounds();
 }
 
 }

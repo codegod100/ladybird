@@ -385,8 +385,8 @@ Core::EventLoop& Application::create_platform_event_loop()
         Core::EventLoopManager::install(*new EventLoopManagerQt);
 #if defined(AK_OS_LINUX)
         // Must run before QApplication: Wayland/GL integration otherwise probes Haswell GPU and can hang.
-        if (WebView::system_has_intel_haswell_gpu()) {
-            (void)WebView::apply_haswell_gpu_workarounds();
+        // apply_haswell_gpu_workarounds() also reports detection, so avoid a second sysfs scan.
+        if (WebView::apply_haswell_gpu_workarounds()) {
             QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
             warnln("Intel Haswell GPU detected; using Qt software OpenGL + xcb (XWayland)");
         }
