@@ -49,6 +49,9 @@ public:
     static ErrorOr<Vector<PasswordEntry>> list_passwords();
     static ErrorOr<void> delete_password(ByteString const& origin, ByteString const& username);
 
+    // True when the in-process password list cache is populated and within TTL (no network).
+    static bool password_cache_is_fresh();
+
     static ErrorOr<void> store_passkey(PasskeyEntry const&);
     // If allowed_credential_ids_b64 is present, only those credential IDs may match.
     // An empty vector means "no credential is allowed" (WebAuthn allowCredentials = []).
