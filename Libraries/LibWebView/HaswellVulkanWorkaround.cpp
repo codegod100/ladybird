@@ -172,6 +172,16 @@ static void prefer_qt_software_opengl()
     (void)Core::Environment::set("LIBGL_ALWAYS_SOFTWARE"sv, "1"sv, Core::Environment::Overwrite::Yes);
 }
 
+static void prefer_qt_xcb_platform()
+{
+    // Qt Wayland's EGL/GBM path still wedges the UI on Haswell even with CPU painting + software GL
+    // (observed: UI RSS ~1.5 GiB, zero event-loop progress). XWayland/xcb stays responsive (~150 MiB).
+    // Honor an explicit override if the user already chose a platform.
+    if (Core::Environment::get("LADYBIRD_ALLOW_WAYLAND"sv).has_value())
+        return;
+    (void)Core::Environment::set("QT_QPA_PLATFORM"sv, "xcb"sv, Core::Environment::Overwrite::Yes);
+}
+
 }
 
 namespace WebView {
@@ -232,9 +242,10 @@ bool apply_haswell_gpu_workarounds()
 
     // Pinning hasvk used to be the workaround, but incomplete hasvk still hangs the Qt UI /
     // Wayland present path and can grow resident memory until the event loop wedges. Fail Vulkan
-    // discovery immediately and keep presentation on CPU / software GL.
+    // discovery immediately, keep presentation on CPU / software GL, and run Qt via XWayland.
     disable_vulkan_icd_discovery();
     prefer_qt_software_opengl();
+    prefer_qt_xcb_platform();
     return true;
 }
 

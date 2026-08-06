@@ -388,7 +388,7 @@ Core::EventLoop& Application::create_platform_event_loop()
         if (WebView::system_has_intel_haswell_gpu()) {
             (void)WebView::apply_haswell_gpu_workarounds();
             QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
-            warnln("Intel Haswell GPU detected; using Qt software OpenGL");
+            warnln("Intel Haswell GPU detected; using Qt software OpenGL + xcb (XWayland)");
         }
 #endif
         m_application = make<LadybirdQApplication>(arguments());

@@ -2,16 +2,14 @@
 # Haswell (HD Graphics 4xxx) GPU workaround for the Ladybird UI process.
 # @ladybird@ is substituted at install time.
 #
-# Incomplete Mesa hasvk (and anv) hang Qt/Wayland present on this GPU. Do not pin hasvk —
-# disable Vulkan ICD discovery and force Qt software OpenGL before the binary starts.
+# Incomplete Mesa Vulkan + Qt Wayland EGL hang the UI on this GPU (even with CPU painting).
+# Force: disabled Vulkan ICD, software GL, and QT_QPA_PLATFORM=xcb (XWayland).
+# Set LADYBIRD_ALLOW_WAYLAND=1 to keep native Wayland (unsupported on Haswell).
 #
-# POSIX sh only: do not use bash `exec -a` (dash /bin/sh rejects it with
-# "exec: -a: not found"). argv0 from the wrapper path is not required for
-# Ladybird; forwarding to the Qt-wrapped binary is enough.
+# POSIX sh only: do not use bash `exec -a`.
 
 _haswell_gpu() {
   for _card in /sys/class/drm/card*; do
-    # Skip connector entries such as card0-HDMI-A-1.
     case "$_card" in
       *-*) continue ;;
     esac
@@ -47,12 +45,14 @@ _haswell_gpu() {
 }
 
 if _haswell_gpu; then
-  # Fail Vulkan discovery immediately (non-existent ICD path).
-  export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/var/empty/ladybird-disabled-vulkan-icd.json}"
-  export VK_DRIVER_FILES="${VK_DRIVER_FILES:-/var/empty/ladybird-disabled-vulkan-icd.json}"
-  # Prefer software GL for Qt's platform integration before QGuiApplication starts.
-  export QT_OPENGL="${QT_OPENGL:-software}"
-  export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+  # Always overwrite — session env may still pin hasvk from older wrappers.
+  export VK_ICD_FILENAMES=/var/empty/ladybird-disabled-vulkan-icd.json
+  export VK_DRIVER_FILES=/var/empty/ladybird-disabled-vulkan-icd.json
+  export QT_OPENGL=software
+  export LIBGL_ALWAYS_SOFTWARE=1
+  if [ -z "${LADYBIRD_ALLOW_WAYLAND:-}" ]; then
+    export QT_QPA_PLATFORM=xcb
+  fi
 fi
 
 exec "@ladybird@" "$@"
