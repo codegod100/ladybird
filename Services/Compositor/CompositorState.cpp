@@ -72,8 +72,13 @@ void CompositorState::create_context(Web::Compositor::CompositorContextId contex
     // survived in UI-side bookkeeping. VERIFY used to abort here (SIGILL), which restart-loops the
     // compositor and leaves the Qt UI wedged on Haswell. Treat duplicates as a no-op reconnect.
     if (m_contexts.contains(context_id)) {
-        dbgln("Ignoring duplicate create_context for context_id={}", context_id);
-        return;
+        auto& existing_context = *m_contexts.get(context_id).value();
+        if (existing_context.is_owned_by(web_content_client)) {
+            dbgln("Ignoring duplicate create_context for context_id={}", context_id);
+            return;
+        }
+        dbgln("Duplicate create_context for context_id={} from different client; replacing context", context_id);
+        destroy_context(context_id);
     }
     if (page_id.has_value())
         VERIFY(context_id == Web::Compositor::compositor_context_id_for_page(*page_id));
